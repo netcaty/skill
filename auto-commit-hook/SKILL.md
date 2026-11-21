@@ -70,8 +70,17 @@ node scripts/uninstall.cjs --agent workbuddy --scope workspace --purge
 If `node` is not on `PATH`, run the same script with the agent's Electron runtime:
 
 ```bash
+# ZCode
 ELECTRON_RUN_AS_NODE=1 "$ZCODE_WINDOWS_APP_INSTALL_DIR/ZCode.exe" scripts/install.cjs --scope workspace
+
+# WorkBuddy (--agent because a plain shell has no WorkBuddy env to auto-detect)
+ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy
 ```
+
+Without the agent's env vars, the executables live in
+`%LOCALAPPDATA%\Programs\ZCode\ZCode.exe` and
+`%LOCALAPPDATA%\Programs\WorkBuddy\WorkBuddy.exe`; the hook scripts probe these
+same paths at runtime.
 
 ## What install does
 
