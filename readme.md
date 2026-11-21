@@ -12,7 +12,6 @@ ZCode / WorkBuddy 的 git 自动检查点 skill：每个 agent 回合结束时�
 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
-> 必须用 `raw.githubusercontent.com` 地址；`github.com/.../install.sh` 页面直接 pipe 会把 HTML 喂给 bash。
 
 ### 方式二：git clone
 
@@ -25,15 +24,14 @@ clone 方式下脚本检测到旁边的 `auto-commit-hook/` 目录后会直接�
 
 ## 启用 hook（可选）
 
-skill 装好后，想要"每回合自动提交"时再注册 hook：
+skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入：
 
-```bash
-node ~/.agents/skills/auto-commit-hook/scripts/install.cjs
+```
+安装 hook
 ```
 
 - agent（`zcode` / `workbuddy`）从会话环境自动推断，不用手动指定
 - 默认 user scope（对本机所有项目生效）；`--scope workspace` 限定单仓库
-- 全部选项（`--agent` / `--scope` / `--config` / `--timeout` / `--dry-run` / `--json`）见 [auto-commit-hook/SKILL.md](auto-commit-hook/SKILL.md)
 - 需要重启 agent 会话（或重开工作区）才会加载 hook
 
 ## 检查 / 卸载
@@ -51,7 +49,7 @@ node ~/.agents/skills/auto-commit-hook/scripts/uninstall.cjs --purge
 | 步骤 | 需要什么 |
 |---|---|
 | 安装 skill | bash + curl（方式一）或 git（方式二）；Windows 下用 Git Bash 即可 |
-| 启用 hook | node（PATH 里没有时会尝试 scoop / WorkBuddy 自带的 node）+ git + bash |
+| 启用 hook | node（PATH 里没有时会尝试 Zcode / WorkBuddy 自带的 node）+ git + bash |
 | 运行 hook（每回合） | git + bash；AI 提交信息额外需要可用的模型来源，失败自动退化为 `chore: update N files` |
 
 ## 目录结构
