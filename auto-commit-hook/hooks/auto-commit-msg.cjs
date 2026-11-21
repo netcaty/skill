@@ -24,9 +24,13 @@
 //                                     session provider config ZCode injects into
 //                                     the hook env; the zcode path follows it so
 //                                     the hook runs on the same provider the
-//                                     session itself uses (anthropic-messages
-//                                     and openai-chat-completions rules both
-//                                     supported; model = rule's modelOrder[0])
+//                                     session itself uses. The first rule with a
+//                                     baseUrl and an access.apiKey wins (id is
+//                                     user-set, never used for selection); its
+//                                     api.type decides request style and auth
+//                                     (anthropic-messages and
+//                                     openai-chat-completions both supported),
+//                                     models are tried in modelOrder order
 //         AUTOCOMMIT_NO_AI=1           disable the model call
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
@@ -179,14 +183,10 @@ function loadZcodeProvider() {
   const usable = r => r && apiOf(r).baseUrl &&
     (process.env.AUTOCOMMIT_LLM_KEY || (r.config.access && r.config.access.apiKey));
   const isAnthropic = r => /anthropic-messages/i.test(String(apiOf(r).type || ""));
-  // Legacy "new-provider" rule keeps priority; then the anthropic-messages
-  // provider the session itself uses (e.g. a local magpie proxy); then the old
-  // localhost openai-chat-completions case; then any usable rule.
-  const rule = rules.find(r => usable(r) && r.providerId === "new-provider") ||
-    rules.find(r => usable(r) && isAnthropic(r)) ||
-    rules.find(r => usable(r) && /openai-chat-completions/i.test(String(apiOf(r).type || "")) &&
-      /(127\.0\.0\.1|localhost)/.test(String(apiOf(r).baseUrl))) ||
-    rules.find(usable);
+  // providerId is user-set and unstable, so it never takes part in selection:
+  // the first usable rule in file order wins, the rule's api.type decides
+  // request style and auth, and models are tried in its modelOrder order.
+  const rule = rules.find(usable);
   if (!rule) return null;
   const api = apiOf(rule);
   const key = process.env.AUTOCOMMIT_LLM_KEY || (rule.config.access && rule.config.access.apiKey);
@@ -195,7 +195,9 @@ function loadZcodeProvider() {
   const override = process.env.AUTOCOMMIT_LLM_URL;
   let url;
   if (override) {
-    url = /\/chat\/completions$/i.test(override) ? override : override.replace(/\/+$/, "") + "/v1/chat/completions";
+    url = isAnthropic(rule)
+      ? (/\/messages$/.test(override) ? override : override.replace(/\/+$/, "") + "/v1/messages")
+      : (/\/chat\/completions$/i.test(override) ? override : override.replace(/\/+$/, "") + "/v1/chat/completions");
   } else if (isAnthropic(rule)) {
     const base = String(api.baseUrl).replace(/\/+$/, "");
     url = /\/messages$/.test(base) ? base : base + "/v1/messages";

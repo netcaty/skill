@@ -206,8 +206,10 @@ removes the copied scripts when no remaining config references them.
 - **Generic message** (`chore: update N files`): the helper did not run, or no model
   provider is configured. Check the Node/Electron runtime and the provider config
   (`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`, default `~/.zcode/v2/provider_config.json`):
-  both `anthropic-messages` and `openai-chat-completions` rules with a `baseUrl` and
-  an `access.apiKey` are used, models from the rule's `modelOrder`.
+  the first rule with a `baseUrl` and an `access.apiKey` wins (`providerId` is
+  user-set and never used for selection); its `api.type` decides request style and
+  auth (`anthropic-messages` and `openai-chat-completions` both supported), and
+  models are tried in the rule's `modelOrder` order.
 - **Double commits**: installed in both scopes; uninstall one.
 - **Config parse error**: the installer refuses to edit invalid JSON. Fix the file or
   pass `--config <file>`.
