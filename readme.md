@@ -64,7 +64,7 @@ auto-commit-hook/            ← skill 本体（即安装到 ~/.agents/skills/ �
 │   └── auto-commit-msg.cjs  ← 把 agent 最终回复转成 Conventional Commits 信息
 └── scripts/
     ├── lib.cjs              ← 配置合并、hook 检测、bash 探测
-    ├── install.cjs / uninstall.cjs / status.cjs
+    ├── install.cjs / uninstall.cjs / status.cjs / setup-llm.cjs
 install.sh                   ← 本文件所在的一键安装脚本
 readme.md
 ```

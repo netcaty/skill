@@ -65,6 +65,13 @@ node scripts/uninstall.cjs
 
 # Uninstall and remove copied scripts when nothing else references them
 node scripts/uninstall.cjs --agent workbuddy --scope workspace --purge
+
+# Manual LLM endpoint for commit messages (stored in
+# ~/.agents/skills/auto-commit-hook/llm-config.json; wins over the session
+# provider, AUTOCOMMIT_LLM_* env overrides win over it)
+node scripts/setup-llm.cjs --url https://example.com/v1/messages --key sk-... --model glm-5.3-flash,auto/glm-5.3-flash
+node scripts/setup-llm.cjs --show
+node scripts/setup-llm.cjs --clear
 ```
 
 If `node` is not on `PATH`, run the same script with the agent's Electron runtime:
@@ -226,6 +233,8 @@ removes the copied scripts when no remaining config references them.
 - `hooks/auto-commit.sh`, `hooks/auto-commit-msg.cjs` — installed verbatim
 - `scripts/lib.cjs` — config merge, hook detection, bash discovery
 - `scripts/install.cjs`, `scripts/uninstall.cjs`, `scripts/status.cjs`
+- `scripts/setup-llm.cjs` — save/show/clear a manual LLM endpoint
+  (`llm-config.json`); it outranks the session provider at runtime
 
 To use this skill in every project, copy this directory to
 `~/.agents/skills/auto-commit-hook/`.

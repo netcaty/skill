@@ -241,10 +241,41 @@ function loadWorkbuddyProvider() {
   return { kind: "workbuddy", url, token, context, models };
 }
 
-// The shell exports AUTOCOMMIT_AGENT (workbuddy | codebuddy:* | zcode |
-// unknown): each host reads its own model source - WorkBuddy's loopback proxy
-// from the hook environment, ZCode's provider_config.json from disk.
+// Manual endpoint saved by scripts/setup-llm.cjs (llm-config.json). An
+// explicit user choice, so it outranks the session-derived providers; the
+// AUTOCOMMIT_LLM_* env overrides (test escape hatch) still win on top of it.
+// Request style follows the URL shape: .../v1/messages -> anthropic.
+function loadManualProvider() {
+  const file = process.env.AUTOCOMMIT_LLM_CONFIG ||
+    path.join(os.homedir(), ".agents", "skills", "auto-commit-hook", "llm-config.json");
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  if (!cfg || typeof cfg !== "object") return null;
+  const url = String(cfg.url || "").trim();
+  const key = String(cfg.key || "").trim();
+  const models = (Array.isArray(cfg.model) ? cfg.model : String(cfg.model || "").split(","))
+    .map(s => String(s).trim()).filter(Boolean);
+  if (!url || !key || !models.length) return null;
+  const kind = /\/messages(\/?)$/i.test(url) ? "zcode-anthropic" : undefined;
+  return { url, key, models, kind };
+}
+
+// Resolution order for the message model: the manual config saved by
+// scripts/setup-llm.cjs first, then the session-derived source (WorkBuddy's
+// loopback proxy from the hook environment, ZCode's provider config from
+// disk). AUTOCOMMIT_LLM_* env overrides win over everything.
 function loadProvider() {
+  const manual = loadManualProvider();
+  if (manual) {
+    return {
+      ...manual,
+      url: process.env.AUTOCOMMIT_LLM_URL || manual.url,
+      key: process.env.AUTOCOMMIT_LLM_KEY || manual.key,
+      models: process.env.AUTOCOMMIT_LLM_MODEL
+        ? process.env.AUTOCOMMIT_LLM_MODEL.split(",").map(s => s.trim()).filter(Boolean)
+        : manual.models
+    };
+  }
   const agent = process.env.AUTOCOMMIT_AGENT || "";
   if (/^(workbuddy|codebuddy)/.test(agent)) return loadWorkbuddyProvider();
   if (agent === "zcode") return loadZcodeProvider();
@@ -461,4 +492,4 @@ if (require.main === module) {
   main().catch(() => {});
 }
 
-module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadWorkbuddyProvider, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };
+module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadManualProvider, loadWorkbuddyProvider, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };

@@ -69,7 +69,7 @@ else
     || fail "curl not found; install curl or use the git clone method."
   BASE="$RAW/auto-commit-hook"
   log "fetching skill files from $BASE"
-  FILES="SKILL.md hooks/auto-commit.sh hooks/auto-commit-msg.cjs scripts/lib.cjs scripts/install.cjs scripts/uninstall.cjs scripts/status.cjs"
+  FILES="SKILL.md hooks/auto-commit.sh hooks/auto-commit-msg.cjs scripts/lib.cjs scripts/install.cjs scripts/uninstall.cjs scripts/status.cjs scripts/setup-llm.cjs"
   for f in $FILES; do
     mkdir -p "$SKILL_DIR/$(dirname "$f")"
     curl -fsSL "$BASE/$f" -o "$SKILL_DIR/$f" || fail "download failed: $BASE/$f"
