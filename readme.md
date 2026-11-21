@@ -37,11 +37,11 @@ agent 会先请求执行该命令的权限，确认后即完成安装，效果�
 skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入：
 
 ```
-安装 hook
+（在当前项目）安装 hook
 ```
 
 - agent（`zcode` / `workbuddy`）从会话环境自动推断，不用手动指定
-- 默认 user scope（对本机所有项目生效）；`--scope workspace` 限定单仓库
+- 默认 user scope（对本机所有项目生效）；可限定单仓库
 - 需要重启 agent 会话（或重开工作区）才会加载 hook
 
 ## 检查 / 卸载
