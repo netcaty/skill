@@ -104,6 +104,7 @@ function main() {
   console.log("");
   console.log("Note: each turn this hook stages all workspace changes (git add -A) and commits with --no-verify.");
   console.log("Start a new session (or reopen the workspace) for the hook to take effect.");
+  console.log("Scope or undo, type in the agent's dialog box: 项目级别启用 hook / 禁用 hook");
 }
 
 try {

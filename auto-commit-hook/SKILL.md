@@ -82,6 +82,21 @@ Without the agent's env vars, the executables live in
 `%LOCALAPPDATA%\Programs\WorkBuddy\WorkBuddy.exe`; the hook scripts probe these
 same paths at runtime.
 
+## Dialog follow-ups
+
+After installing, tell the user the dialog prompts — not raw node commands:
+`项目级别启用 hook` applies the hook to the current project only; `禁用 hook`
+removes it. When the user types them:
+
+- `项目级别启用 hook`: nothing installed yet → run
+  `node scripts/install.cjs --scope workspace`. If user scope is installed,
+  uninstall it first and then install workspace scope — install.cjs refuses
+  both scopes at once, and running them together commits twice per turn. If
+  workspace scope is already installed, just say so.
+- `禁用 hook`: run `node scripts/status.cjs` first, then uninstall every
+  installed scope (`node scripts/uninstall.cjs`, plus `--scope workspace`
+  where needed). Keep the copied scripts unless the user asks for `--purge`.
+
 ## What install does
 
 1. Copies `hooks/auto-commit.sh` and `hooks/auto-commit-msg.cjs` to the agent's
