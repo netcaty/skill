@@ -204,8 +204,10 @@ removes the copied scripts when no remaining config references them.
   `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic message** (`chore: update N files`): the helper did not run, or no model
-  provider is configured. Check the Node/Electron runtime and
-  `~/.zcode/v2/provider_config.json`.
+  provider is configured. Check the Node/Electron runtime and the provider config
+  (`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`, default `~/.zcode/v2/provider_config.json`):
+  both `anthropic-messages` and `openai-chat-completions` rules with a `baseUrl` and
+  an `access.apiKey` are used, models from the rule's `modelOrder`.
 - **Double commits**: installed in both scopes; uninstall one.
 - **Config parse error**: the installer refuses to edit invalid JSON. Fix the file or
   pass `--config <file>`.

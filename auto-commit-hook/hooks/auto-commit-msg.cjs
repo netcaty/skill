@@ -20,6 +20,13 @@
 //                                     app injects into each session; used when
 //                                     the agent is workbuddy/codebuddy (or, for
 //                                     unknown agents, when all three are set)
+//         ZCODE_PERSONAL_PROVIDER_CONFIG_FILE
+//                                     session provider config ZCode injects into
+//                                     the hook env; the zcode path follows it so
+//                                     the hook runs on the same provider the
+//                                     session itself uses (anthropic-messages
+//                                     and openai-chat-completions rules both
+//                                     supported; model = rule's modelOrder[0])
 //         AUTOCOMMIT_NO_AI=1           disable the model call
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
@@ -160,16 +167,28 @@ function localDraft(text) {
 
 function loadZcodeProvider() {
   if (process.env.AUTOCOMMIT_NO_AI === "1") return null;
+  // The session's own provider config: ZCode injects its path into the hook
+  // environment, so the hook follows whatever provider the session runs on.
   const file = process.env.AUTOCOMMIT_PROVIDER_CONFIG ||
+    process.env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE ||
     path.join(os.homedir(), ".zcode", "v2", "provider_config.json");
   let cfg;
   try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }  const rules = cfg && cfg.config && cfg.config.providerConfigRules && cfg.config.providerConfigRules.providerRules;
   if (!Array.isArray(rules)) return null;
-  const rule = rules.find(r => r && r.providerId === "new-provider" && r.config && r.config.api && r.config.api.baseUrl) ||
-    rules.find(r => r && /openai-chat-completions/i.test((r.config && r.config.api && r.config.api.type) || "") &&
-      /(127\.0\.0\.1|localhost)/.test((r.config && r.config.api && r.config.api.baseUrl) || ""));
+  const apiOf = r => (r && r.config && r.config.api) || {};
+  const usable = r => r && apiOf(r).baseUrl &&
+    (process.env.AUTOCOMMIT_LLM_KEY || (r.config.access && r.config.access.apiKey));
+  const isAnthropic = r => /anthropic-messages/i.test(String(apiOf(r).type || ""));
+  // Legacy "new-provider" rule keeps priority; then the anthropic-messages
+  // provider the session itself uses (e.g. a local magpie proxy); then the old
+  // localhost openai-chat-completions case; then any usable rule.
+  const rule = rules.find(r => usable(r) && r.providerId === "new-provider") ||
+    rules.find(r => usable(r) && isAnthropic(r)) ||
+    rules.find(r => usable(r) && /openai-chat-completions/i.test(String(apiOf(r).type || "")) &&
+      /(127\.0\.0\.1|localhost)/.test(String(apiOf(r).baseUrl))) ||
+    rules.find(usable);
   if (!rule) return null;
-  const api = rule.config.api || {};
+  const api = apiOf(rule);
   const key = process.env.AUTOCOMMIT_LLM_KEY || (rule.config.access && rule.config.access.apiKey);
   if (!key || !api.baseUrl) return null;
 
@@ -177,10 +196,14 @@ function loadZcodeProvider() {
   let url;
   if (override) {
     url = /\/chat\/completions$/i.test(override) ? override : override.replace(/\/+$/, "") + "/v1/chat/completions";
+  } else if (isAnthropic(rule)) {
+    const base = String(api.baseUrl).replace(/\/+$/, "");
+    url = /\/messages$/.test(base) ? base : base + "/v1/messages";
   } else {
     const base = String(api.baseUrl).replace(/\/+$/, "");
     url = /\/v1$/i.test(base) ? base + "/chat/completions" : base + "/v1/chat/completions";
   }
+  const anthropic = !override && isAnthropic(rule);
   const model = process.env.AUTOCOMMIT_LLM_MODEL;
   let models;
   if (model) {
@@ -188,9 +211,9 @@ function loadZcodeProvider() {
   } else if (Array.isArray(rule.config.modelOrder) && rule.config.modelOrder.length) {
     models = rule.config.modelOrder.filter(m => typeof m === "string" && m);
   } else {
-    models = ["workbuddy/deepseek-v4.1-flash"];
+    models = [anthropic ? "glm-5.3-flash" : "workbuddy/deepseek-v4.1-flash"];
   }
-  return { url, key, models };
+  return { url, key, models, kind: anthropic ? "zcode-anthropic" : undefined };
 }
 
 // WorkBuddy: the desktop app runs a loopback chat proxy and injects its URL, a
@@ -345,32 +368,52 @@ async function aiDraft(text, fallback) {
     const timer = setTimeout(() => controller.abort(), Math.min(perAttemptMs, budget));
     try {
       const streaming = provider.kind === "workbuddy";
+      const anthropic = provider.kind === "zcode-anthropic";
       const headers = { "Content-Type": "application/json" };
       if (streaming) {
         headers["Authorization"] = "Bearer " + provider.token;
         // The proxy resolves its session from this header; a plain Bearer
         // token alone is answered with 401 unauthorized.
         headers["x-workbuddy-mcp-context"] = provider.context;
+      } else if (anthropic) {
+        // Anthropic Messages API; Bearer is sent alongside x-api-key because
+        // local proxies differ in which one they check.
+        headers["x-api-key"] = provider.key;
+        headers["Authorization"] = "Bearer " + provider.key;
+        headers["anthropic-version"] = "2023-06-01";
       } else {
         headers["Authorization"] = "Bearer " + provider.key;
       }
+      const body = anthropic
+        ? {
+            model: model,
+            max_tokens: 600,
+            temperature: 0.2,
+            system: messages[0].content,
+            messages: [{ role: "user", content: messages[1].content }]
+          }
+        : {
+            model: model,
+            messages,
+            temperature: 0.2,
+            max_tokens: 600,
+            stream: streaming
+          };
       const res = await fetch(provider.url, {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          model: model,
-          messages,
-          temperature: 0.2,
-          max_tokens: 600,
-          stream: streaming
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal
       });
       if (!res.ok) continue;
       const content = streaming
         ? await readSseText(res)
-        : ((data => data && data.choices && data.choices[0] &&
-            data.choices[0].message && data.choices[0].message.content)(await res.json()));
+        : anthropic
+          ? ((data => Array.isArray(data && data.content)
+              ? data.content.filter(b => b && b.type === "text" && typeof b.text === "string").map(b => b.text).join("")
+              : "")(await res.json()))
+          : ((data => data && data.choices && data.choices[0] &&
+              data.choices[0].message && data.choices[0].message.content)(await res.json()));
       if (typeof content !== "string" || !content.trim()) continue;
       const parsed = parseModelJson(content);
       const draft = validate(parsed, fallback);
