@@ -103,6 +103,12 @@ removes it. When the user types them:
 - `禁用 hook`: run `node scripts/status.cjs` first, then uninstall every
   installed scope (`node scripts/uninstall.cjs`, plus `--scope workspace`
   where needed). Keep the copied scripts unless the user asks for `--purge`.
+- `设置 LLM 配置[: url=... key=... model=...]`: run
+  `node scripts/setup-llm.cjs --url <url> --key <key> [--model <id[,id...]>]`;
+  ask for any missing values first. After saving, confirm with `--show`
+  (key masked) and never echo the key in plain text. `查看 LLM 配置` runs
+  `--show`, `清除 LLM 配置` runs `--clear`. The saved config outranks the
+  session provider — say so when saving.
 
 ## What install does
 
