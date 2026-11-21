@@ -250,3 +250,7 @@ removes the copied scripts when no remaining config references them.
 
 To use this skill in every project, copy this directory to
 `~/.agents/skills/auto-commit-hook/`.
+
+After editing anything under `hooks/`, re-run `install.cjs` — the hook
+executes the copies in `~/.zcode/hooks/auto-commit/` (or `~/.workbuddy/...`),
+not this directory; `install.sh` alone does not refresh them.
