@@ -80,4 +80,4 @@ fi
 log "skill directory: $SKILL_DIR"
 log "Hook not registered. To enable auto-commit later, run:"
 log "  node \"$SKILL_DIR/scripts/install.cjs\""
-log "  or Enter 'Enable hook' in the agent's dialog box."
+log "  or type '安装 hook' in the agent's dialog box."
