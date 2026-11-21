@@ -6,12 +6,12 @@
 #
 # 1. curl (no git needed; a raw URL — piping the github.com page feeds HTML
 #    to bash):
-#      curl -fsSL https://raw.githubusercontent.com/netcaty/auto-commit-hook/main/install.sh | bash
+#      curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 #
 # 2. git clone (the script detects the checkout next to itself and copies the
 #    local auto-commit-hook/ folder):
-#      git clone https://github.com/netcaty/auto-commit-hook
-#      ./auto-commit-hook/install.sh
+#      git clone https://github.com/netcaty/skill
+#      ./skill/install.sh
 #
 # To enable auto-commit afterwards (this script does not do it):
 #   node ~/.agents/skills/auto-commit-hook/scripts/install.cjs
@@ -31,7 +31,7 @@ case ":$PATH:" in
   *) [ -d /usr/bin ] && PATH="/usr/bin:/bin:$PATH" ;;
 esac
 
-REPO="netcaty/auto-commit-hook"
+REPO="netcaty/skill"
 BRANCH="main"
 RAW="${AUTOCOMMIT_INSTALL_RAW:-https://raw.githubusercontent.com/$REPO/$BRANCH}"
 SKILL_DIR="${AUTOCOMMIT_INSTALL_DIR:-$HOME/.agents/skills/auto-commit-hook}"

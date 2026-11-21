@@ -9,7 +9,7 @@ ZCode / WorkBuddy 的 git 自动检查点 skill：每个 agent 回合结束时�
 ### 方式一：curl（无需 git）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/netcaty/auto-commit-hook/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
 > 必须用 `raw.githubusercontent.com` 地址；`github.com/.../install.sh` 页面直接 pipe 会把 HTML 喂给 bash。
@@ -17,8 +17,8 @@ curl -fsSL https://raw.githubusercontent.com/netcaty/auto-commit-hook/main/insta
 ### 方式二：git clone
 
 ```bash
-git clone https://github.com/netcaty/auto-commit-hook
-./auto-commit-hook/install.sh
+git clone https://github.com/netcaty/skill
+./skill/install.sh
 ```
 
 clone 方式下脚本检测到旁边的 `auto-commit-hook/` 目录后会直接本地拷贝，不访问网络。也可以手动拷贝：把 `auto-commit-hook/` 目录整个复制到 `~/.agents/skills/` 下。
