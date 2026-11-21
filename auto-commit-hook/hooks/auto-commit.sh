@@ -140,42 +140,57 @@ if [ -z "$runtime" ]; then
   set_runtime "${AUTOCOMMIT_NODE:-}"
 fi
 
-# Known agent install locations, then portable Node installs. The env-derived
-# agent hint decides which host's paths are tried first; no process scanning.
+# Known agent install locations (Windows + macOS app bundles), the agents'
+# bundled Node/Electron runtimes, then standalone Node installs. The
+# env-derived agent hint decides which host's paths are tried first; no
+# process scanning. Candidates that are unset or missing are skipped by
+# set_runtime, so the same list serves both platforms.
 if [ -z "$runtime" ]; then
+  bundled_paths=(
+    "${ZCODE_NODE_FALLBACK_EXEC_PATH:-}"
+    "${WORKBUDDY_NODE_FALLBACK_EXEC_PATH:-}"
+  )
   zcode_paths=(
     "${ZCODE_WINDOWS_APP_INSTALL_DIR:-}/ZCode.exe"
     "${LOCALAPPDATA:-}/Programs/ZCode/ZCode.exe"
+    "/c/Program Files/ZCode/ZCode.exe"
+    "/Applications/ZCode.app/Contents/MacOS/ZCode"
+    "$HOME/Applications/ZCode.app/Contents/MacOS/ZCode"
   )
   workbuddy_paths=(
     "${WB_SHT_INSTDIR:-}/WorkBuddy.exe"
     "${LOCALAPPDATA:-}/Programs/WorkBuddy/WorkBuddy.exe"
     "/c/Program Files/WorkBuddy/WorkBuddy.exe"
     "/c/Program Files (x86)/WorkBuddy/WorkBuddy.exe"
+    "/Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy"
+    "$HOME/Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy"
   )
   codebuddy_paths=(
     "${LOCALAPPDATA:-}/Programs/CodeBuddy/CodeBuddy.exe"
+    "/Applications/CodeBuddy.app/Contents/MacOS/CodeBuddy"
   )
-  case "$agent" in
-    workbuddy)
-      agent_paths=("${workbuddy_paths[@]}" "${codebuddy_paths[@]}" "${zcode_paths[@]}")
-      ;;
-    codebuddy:*)
-      agent_paths=("${codebuddy_paths[@]}" "${workbuddy_paths[@]}" "${zcode_paths[@]}")
-      ;;
-    zcode)
-      agent_paths=("${zcode_paths[@]}" "${workbuddy_paths[@]}" "${codebuddy_paths[@]}")
-      ;;
-    *)
-      agent_paths=("${zcode_paths[@]}" "${workbuddy_paths[@]}" "${codebuddy_paths[@]}")
-      ;;
-  esac
   node_paths=(
     "$HOME/scoop/shims/node.exe"
     "$HOME/scoop/apps/nodejs-lts/current/node.exe"
     "$HOME/scoop/apps/nodejs/current/node.exe"
     "/c/Program Files/nodejs/node.exe"
+    "/opt/homebrew/bin/node"
+    "/usr/local/bin/node"
   )
+  case "$agent" in
+    workbuddy)
+      agent_paths=("${bundled_paths[@]}" "${workbuddy_paths[@]}" "${codebuddy_paths[@]}" "${zcode_paths[@]}")
+      ;;
+    codebuddy:*)
+      agent_paths=("${bundled_paths[@]}" "${codebuddy_paths[@]}" "${workbuddy_paths[@]}" "${zcode_paths[@]}")
+      ;;
+    zcode)
+      agent_paths=("${bundled_paths[@]}" "${zcode_paths[@]}" "${workbuddy_paths[@]}" "${codebuddy_paths[@]}")
+      ;;
+    *)
+      agent_paths=("${bundled_paths[@]}" "${zcode_paths[@]}" "${workbuddy_paths[@]}" "${codebuddy_paths[@]}")
+      ;;
+  esac
   for cand in "${agent_paths[@]}" "${node_paths[@]}"; do
     set_runtime "$cand" && break
   done

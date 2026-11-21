@@ -77,17 +77,23 @@ node scripts/setup-llm.cjs --clear
 If `node` is not on `PATH`, run the same script with the agent's Electron runtime:
 
 ```bash
-# ZCode
+# ZCode (Windows)
 ELECTRON_RUN_AS_NODE=1 "$ZCODE_WINDOWS_APP_INSTALL_DIR/ZCode.exe" scripts/install.cjs --scope workspace
 
+# ZCode (macOS)
+ELECTRON_RUN_AS_NODE=1 /Applications/ZCode.app/Contents/MacOS/ZCode scripts/install.cjs --scope workspace
+
 # WorkBuddy (--agent because a plain shell has no WorkBuddy env to auto-detect)
-ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy
+ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy          # Windows
+ELECTRON_RUN_AS_NODE=1 /Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy scripts/install.cjs --agent workbuddy   # macOS
 ```
 
-Without the agent's env vars, the executables live in
-`%LOCALAPPDATA%\Programs\ZCode\ZCode.exe` and
-`%LOCALAPPDATA%\Programs\WorkBuddy\WorkBuddy.exe`; the hook scripts probe these
-same paths at runtime.
+The agents' bundled Node runtimes (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
+`$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`) are accepted too and tried first by the
+hook scripts. Without the agent's env vars, the executables live in
+`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy}\` (Windows) or
+`/Applications/{ZCode,WorkBuddy}.app/Contents/MacOS/` (macOS, `~/Applications`
+probed as well); the hook scripts probe these same paths at runtime.
 
 ## Dialog follow-ups
 

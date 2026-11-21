@@ -51,8 +51,8 @@ skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入�
 
 | 步骤 | 需要什么 |
 |---|---|
-| 安装 skill | bash + curl（方式一、方式三）或 git（方式二）；Windows 下用 Git Bash 即可 |
-| 启用 hook | node（PATH 里没有时会尝试 Zcode / WorkBuddy 自带的 node）+ git + bash |
+| 安装 skill | bash + curl（方式一、方式三）或 git（方式二）；Windows 用 Git Bash，macOS 用自带 bash 即可 |
+| 启用 hook | node（PATH 里没有时会尝试 ZCode / WorkBuddy 自带的运行时，Windows 与 macOS 应用路径都会探测）+ git + bash |
 | 运行 hook（每回合） | git + bash；AI 提交信息额外需要可用的模型来源，失败自动退化为 `chore: update N files` |
 
 ## 目录结构
