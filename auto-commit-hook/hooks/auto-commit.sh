@@ -7,6 +7,9 @@
 # unavailable. The model source follows the detected agent, exported to the
 # helper as AUTOCOMMIT_AGENT: WorkBuddy/CodeBuddy use the per-session
 # WORKBUDDY_VLM_* environment endpoint, ZCode reads provider_config.json.
+# Sensitive files: obvious secret names are unstaged by name (layer 1), and the
+# helper may flag more from the staged diff (layer 2); both layers are
+# best-effort and every excluded path is listed in the commit body.
 # Nothing is written to stdout: hook stdout is parsed as strict JSON, and
 # non-zero exits are recorded as hook failures.
 # Runtime: a real node from PATH when available, otherwise the host agent's
@@ -81,8 +84,32 @@ fi
 git add -A >/dev/null 2>&1 || exit 0
 git diff --cached --quiet && exit 0  # nothing stageable changed
 
-file_count=$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+# --- sensitive-file gate, layer 1 --------------------------------------------
+# add -A staged everything, including files that must not be committed. This
+# deterministic pass unstages obvious secret files by name (covers new files
+# too, since they are already staged at this point); layer 2 below lets the
+# helper screen the staged diff with the model. Excluded paths are listed in
+# the commit body so the checkpoint stays auditable. GIT_LITERAL_PATHSPECS
+# keeps file names with glob metacharacters from matching more than themselves.
+sensitive_exclude=""
+sensitive_names=$(git diff --cached --name-only 2>/dev/null | grep -iE \
+  -e '(^|/)\.env($|\.)' \
+  -e '\.(pem|key|p12|pfx|jks|keystore|kdbx)$' \
+  -e '(^|/)id_(rsa|dsa|ecdsa|ed25519)($|\.)' \
+  -e '(^|/)(credentials?|secrets?)\.(json|ya?ml|toml|ini|txt)$' \
+  -e '(^|/)service[-_]?account[-_0-9]*\.json$' \
+  -e '(^|/)\.(npmrc|pypirc|netrc)$' \
+  | grep -ivE -e '(^|/)\.env\.(example|sample|template|dist|defaults)$' || true)
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null || true
+  sensitive_exclude="$sensitive_exclude$f"$'\n'
+done <<EOF
+$sensitive_names
+EOF
 changed=$(git diff --cached --name-only 2>/dev/null | head -n 200)
+file_count=$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+[ "$file_count" -gt 0 ] || exit 0  # every staged change was excluded
 
 helper="$script_dir/auto-commit-msg.cjs"
 
@@ -155,14 +182,38 @@ if [ -z "$runtime" ]; then
 fi
 
 msgfile=$(mktemp) || exit 0
+difffile=$(mktemp) || exit 0
+sensitive_out=$(mktemp) || exit 0
+# Layer 2 input: the staged diff (HEAD vs index) for the model to screen; the
+# shell caps it at 20 KB and the helper clips again. Empty diff (binary-only
+# stages) simply skips the content screen.
+git diff --cached --no-color --no-textconv --no-ext-diff 2>/dev/null | head -c 20000 > "$difffile" || true
 if [ -n "$runtime" ] && [ -f "$helper" ]; then
-  printf '%s' "$hook_input" | CHANGED="$changed" ELECTRON_RUN_AS_NODE=1 "$runtime" "$helper" > "$msgfile" 2>/dev/null
+  printf '%s' "$hook_input" | CHANGED="$changed" DIFF_FILE="$difffile" SENSITIVE_OUT="$sensitive_out" ELECTRON_RUN_AS_NODE=1 "$runtime" "$helper" > "$msgfile" 2>/dev/null
 fi
 if [ ! -s "$msgfile" ]; then
   if [ "$file_count" -eq 1 ]; then unit=file; else unit=files; fi
   printf 'chore: update %s %s\n' "$file_count" "$unit" > "$msgfile"
 fi
 
+# Layer 2 results: unstage what the model flagged (the helper already matched
+# every reported path against the staged CHANGED list, so a hallucinated path
+# cannot unstage anything), then note every exclusion in the commit body.
+while IFS= read -r f; do
+  f=$(printf '%s' "$f" | tr -d '\r')
+  [ -n "$f" ] || continue
+  GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null || true
+  sensitive_exclude="$sensitive_exclude$f"$'\n'
+done < "$sensitive_out"
+if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
+  git diff --cached --quiet && { rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
+  {
+    printf '\n'
+    printf '%s\n' "⚠ excluded from this commit (sensitive):"
+    printf '%s\n' "$sensitive_exclude" | sed '/^$/d; s/^/- /'
+  } >> "$msgfile"
+fi
+
 git -c commit.gpgsign=false commit -F "$msgfile" --no-verify >/dev/null 2>&1
-rm -f "$msgfile"
+rm -f "$msgfile" "$difffile" "$sensitive_out"
 exit 0

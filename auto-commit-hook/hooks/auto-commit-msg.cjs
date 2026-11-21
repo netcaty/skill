@@ -4,6 +4,14 @@
 // stdin : Stop hook JSON payload - only the last_assistant_message field is
 //         read; everything else in the payload is ignored.
 // env   : CHANGED                     changed file paths, newline separated
+//         DIFF_FILE                    file holding the staged diff (HEAD vs
+//                                     index, pre-clipped by the shell); its
+//                                     presence enables the sensitive-content
+//                                     screen described below
+//         SENSITIVE_OUT                output file: newline-separated staged
+//                                     paths the model flagged as containing
+//                                     sensitive content (written only if any;
+//                                     auto-commit.sh unstages them)
 //         AUTOCOMMIT_AGENT             agent type from auto-commit.sh (zcode |
 //                                     workbuddy | codebuddy:* | unknown);
 //                                     selects the model source below
@@ -97,6 +105,32 @@ function inferTypeFromText(text) {
 
 function changedFiles() {
   return (process.env.CHANGED || "").split(/\r?\n/).filter(Boolean);
+}
+
+function readDiff() {
+  const file = process.env.DIFF_FILE;
+  if (!file) return "";
+  try { return fs.readFileSync(file, "utf8"); } catch { return ""; }
+}
+
+// Layer 2 of the sensitive gate: paths the model flagged as containing
+// sensitive content. Only paths that are actually staged (present in CHANGED)
+// are accepted, so a hallucinated path can never unstage anything.
+function collectSensitive(obj) {
+  const changed = new Set(changedFiles());
+  const seen = new Set();
+  const out = [];
+  for (const raw of (Array.isArray(obj && obj.sensitiveFiles) ? obj.sensitiveFiles : [])) {
+    const f = String(raw).trim();
+    if (f && changed.has(f) && !seen.has(f)) { seen.add(f); out.push(f); }
+  }
+  return out.slice(0, 10);
+}
+
+function writeSensitive(files) {
+  const out = process.env.SENSITIVE_OUT;
+  if (!out || !files.length) return;
+  try { fs.writeFileSync(out, files.join("\n") + "\n", "utf8"); } catch {}
 }
 
 function inferTypeFromFiles() {
@@ -265,21 +299,36 @@ async function aiDraft(text, fallback) {
   if (!provider) return null;
 
   const clipped = Array.from(text).slice(0, 12000).join("");
+  const diff = readDiff();
+  const diffClip = Array.from(diff).slice(0, 12000).join("");
+  const files = changedFiles();
   const prompt = [
     "根据下面的 AGENT_FINAL_MESSAGE（agent 本轮最终回复）生成一条 git 提交信息。要求：",
     "1. type 只能是：" + TYPES.join(", ") + "。",
     "2. subject：使用与 AGENT_FINAL_MESSAGE 相同的主语言概括本轮改动，不超过 40 个字符，不加句号，不要以 type 开头。",
     "3. body：2-5 条要点，每条一句话，概括本轮实际改动和结果；不要复述执行过程；不要输出文件数量、增删行数等 diffstat；不要编造消息中没有的信息。",
-    '4. 只输出一个 JSON 对象，不要 markdown 代码块：{"type":"fix","subject":"...","body":["...","..."]}',
-    "",
-    "AGENT_FINAL_MESSAGE:",
-    "<<<",
-    clipped,
-    ">>>"
-  ].join("\n");
+    '4. 只输出一个 JSON 对象，不要 markdown 代码块：{"type":"fix","subject":"...","body":["..."],"sensitiveFiles":[]}'
+  ];
+  if (files.length) {
+    prompt.push("", "CHANGED_FILES（本轮暂存的文件路径）:", files.join("\n"));
+  }
+  if (diffClip) {
+    prompt.push(
+      "",
+      "另外，检查 CHANGED_FILES 和 DIFF 中是否包含敏感信息（API key、token、私钥、证书、密码、数据库连接串等）：",
+      "- 把含敏感信息的文件路径放进 sensitiveFiles；路径必须逐字来自 CHANGED_FILES，最多 10 个。",
+      "- 只在较有把握时标记，宁缺勿滥；没有就返回 []。",
+      "",
+      "DIFF:",
+      "<<<",
+      diffClip,
+      ">>>"
+    );
+  }
+  prompt.push("", "AGENT_FINAL_MESSAGE:", "<<<", clipped, ">>>");
   const messages = [
     { role: "system", content: "你是 git 提交信息生成器，只输出 JSON 对象。" },
-    { role: "user", content: prompt }
+    { role: "user", content: prompt.join("\n") }
   ];
 
   const perAttemptMs = Number(process.env.AUTOCOMMIT_AI_TIMEOUT_MS || 8000);
@@ -323,8 +372,12 @@ async function aiDraft(text, fallback) {
         : ((data => data && data.choices && data.choices[0] &&
             data.choices[0].message && data.choices[0].message.content)(await res.json()));
       if (typeof content !== "string" || !content.trim()) continue;
-      const draft = validate(parseModelJson(content), fallback);
-      if (draft) return draft;
+      const parsed = parseModelJson(content);
+      const draft = validate(parsed, fallback);
+      if (draft) {
+        writeSensitive(collectSensitive(parsed));
+        return draft;
+      }
     } catch {
       // fall through and try the next model
     } finally {
@@ -363,4 +416,4 @@ if (require.main === module) {
   main().catch(() => {});
 }
 
-module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadWorkbuddyProvider, readSseText };
+module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadWorkbuddyProvider, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };

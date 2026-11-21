@@ -162,6 +162,17 @@ removes the copied scripts when no remaining config references them.
 
 - The hook runs `git add -A` every turn: all tracked/untracked, non-ignored changes
   are committed, including pre-existing user changes.
+- Sensitive files get a two-layer gate before the commit. Layer 1 (deterministic)
+  unstages obvious secret names — `.env*` (except `.env.example`-style), key/cert
+  extensions (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`),
+  `id_rsa`-style SSH keys, `credentials*`/`secrets*` data files, service-account
+  JSON, and `.npmrc`/`.pypirc`/`.netrc`. Layer 2 (best-effort) screens a clipped
+  staged diff with the same model call that writes the commit message and can
+  flag more paths. Every excluded path is listed in the commit body under
+  `⚠ excluded from this commit (sensitive)`. This is not a security boundary:
+  an unavailable model leaves only layer 1 (`AUTOCOMMIT_NO_AI=1` also disables
+  layer 2), and flagged paths are always matched against the real staged list,
+  so a hallucinated path can never unstage anything.
 - It uses `--no-verify` and disables GPG signing for that commit.
 - It commits on the current branch and skips merge/rebase/conflict/detached-HEAD
   states.
