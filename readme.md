@@ -4,7 +4,7 @@ ZCode / WorkBuddy 的 git 自动检查点 skill：每个 agent 回合结束时�
 
 ## 安装 skill
 
-两种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。**
+三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。**
 
 ### 方式一：curl（无需 git）
 
@@ -22,6 +22,16 @@ git clone https://github.com/netcaty/skill
 
 clone 方式下脚本检测到旁边的 `auto-commit-hook/` 目录后会直接本地拷贝，不访问网络。也可以手动拷贝：把 `auto-commit-hook/` 目录整个复制到 `~/.agents/skills/` 下。
 
+### 方式三：agent 对话框安装
+
+不敲命令，在 ZCode / WorkBuddy 的对话框直接输入 prompt，让 agent 代为安装：
+
+```
+安装 auto-commit-hook skill：执行 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash ，装到 ~/.agents/skills/auto-commit-hook/ 即可，只装 skill，不要注册任何 hook。
+```
+
+agent 会先请求执行该命令的权限，确认后即完成安装，效果与方式一相同。Windows 下 agent 会自动改用 Git Bash 执行。
+
 ## 启用 hook（可选）
 
 skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入：
@@ -36,19 +46,19 @@ skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入�
 
 ## 检查 / 卸载
 
-```bash
-# 查看安装状态（两个 scope 一起看）
-node ~/.agents/skills/auto-commit-hook/scripts/status.cjs --all --json
+```
+对话框输入：
+查看 hook 状态
 
-# 卸载 hook 并清理拷贝的脚本
-node ~/.agents/skills/auto-commit-hook/scripts/uninstall.cjs --purge
+对话框输入：
+卸载 hook
 ```
 
 ## 依赖
 
 | 步骤 | 需要什么 |
 |---|---|
-| 安装 skill | bash + curl（方式一）或 git（方式二）；Windows 下用 Git Bash 即可 |
+| 安装 skill | bash + curl（方式一、方式三）或 git（方式二）；Windows 下用 Git Bash 即可 |
 | 启用 hook | node（PATH 里没有时会尝试 Zcode / WorkBuddy 自带的 node）+ git + bash |
 | 运行 hook（每回合） | git + bash；AI 提交信息额外需要可用的模型来源，失败自动退化为 `chore: update N files` |
 
