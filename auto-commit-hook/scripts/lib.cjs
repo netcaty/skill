@@ -10,14 +10,108 @@ const ASSET_DIR = path.join(SKILL_ROOT, "hooks");
 const SCRIPT_NAME = "auto-commit.sh";
 const HELPER_NAME = "auto-commit-msg.cjs";
 const DEFAULT_TIMEOUT_MS = 30000;
-const AGENTS = ["zcode", "workbuddy", "claude"];
+
+// ---------------------------------------------------------------------------
+// Agent registry — the authoritative install-side facts per supported agent.
+// detectAgent() picks a profile and every install-side feature (asset dir,
+// hook config location, hook JSON schema) goes through it. Adding an agent
+// (e.g. dsh) means adding one defineAgent() entry here; only when its hook
+// format or commit-message model source is genuinely new does it also need a
+// HOOK_SCHEMA_WRITERS entry (below) / a MODEL_SOURCES entry in
+// hooks/auto-commit-msg.cjs plus an optional marker line in the detection
+// table of hooks/auto-commit.sh.
+//
+// priority is the detection order: brand-specific prefixes must win over
+// shared ones (WorkBuddy exports the CODEBUDDY_*/CLAUDE_* pair and ZCode
+// exports a CLAUDE_* pair too), so workbuddy (10) < zcode (20) < claude (30).
+// A plain shell matches no profile and falls back to FALLBACK_AGENT.
+// ---------------------------------------------------------------------------
+
+const FALLBACK_AGENT = "zcode";
+
+function defineAgent(profile) {
+  return Object.freeze(Object.assign({ priority: 1000 }, profile));
+}
+
+const AGENT_PROFILES = {
+  zcode: defineAgent({
+    name: "zcode",
+    priority: 20,
+    detect(env) {
+      return !!(env.ZCODE_PROJECT_DIR || env.ZCODE_SESSION_ID ||
+        env.ZCODE_NODE_FALLBACK_EXEC_PATH || env.ZCODE_WINDOWS_APP_INSTALL_DIR);
+    },
+    installDir(home) {
+      return path.join(home, ".zcode", "hooks", "auto-commit");
+    },
+    configPaths(project, home) {
+      return {
+        workspace: path.join(project, ".zcode", "config.json"),
+        user: path.join(home, ".zcode", "cli", "config.json")
+      };
+    },
+    hookSchema: "process-events"
+  }),
+  workbuddy: defineAgent({
+    name: "workbuddy",
+    priority: 10,
+    detect(env) {
+      return /\bworkbuddy\b/i.test(env.WORKBUDDY_PRODUCT_NAME || "") ||
+        !!(env.WORKBUDDY_APP_NAME || env.WORKBUDDY_APP_PATH ||
+          env.WORKBUDDY_IS_PACKAGED || env.WB_SHT_INSTDIR ||
+          env.WORKBUDDY_NODE_FALLBACK_EXEC_PATH ||
+          env.WORKBUDDY_WINDOWS_APP_INSTALL_DIR ||
+          env.WORKBUDDY_APP_INSTALL_DIR || env.WORKBUDDY_PROJECT_DIR);
+    },
+    installDir(home) {
+      return path.join(home, ".workbuddy", "hooks", "auto-commit");
+    },
+    // WorkBuddy's CLI home is fixed at ~/.workbuddy; the settings.json name
+    // follows the verified project-level layout. No env-var lookup.
+    configPaths(project, home) {
+      return {
+        workspace: path.join(project, ".workbuddy", "settings.json"),
+        user: path.join(home, ".workbuddy", "settings.json")
+      };
+    },
+    hookSchema: "command-flat"
+  }),
+  claude: defineAgent({
+    name: "claude",
+    priority: 30,
+    // Only Claude Code's own markers may select claude, and this profile is
+    // deliberately checked after zcode's: ZCode exports a CLAUDE_* pair too.
+    detect(env) {
+      return !!(env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT || env.CLAUDE_CODE_SSE_PORT);
+    },
+    installDir(home) {
+      return path.join(home, ".claude", "hooks", "auto-commit");
+    },
+    // Claude Code's documented settings layout: shared user settings and
+    // per-project settings.json under .claude/.
+    configPaths(project, home) {
+      return {
+        workspace: path.join(project, ".claude", "settings.json"),
+        user: path.join(home, ".claude", "settings.json")
+      };
+    },
+    hookSchema: "command-flat-matcher"
+  })
+};
+
+const AGENTS = Object.keys(AGENT_PROFILES);
+
+function getAgentProfile(agent) {
+  return AGENT_PROFILES[agent] || null;
+}
 
 // Each agent gets its own asset copy, so uninstalling one never breaks the
-// others on a machine that runs several of them.
+// others on a machine that runs several of them. Unknown agents fall back to
+// the zcode copy, matching the pre-registry behavior (parseArgs rejects them
+// at the CLI level anyway).
 function installDir(agent) {
-  if (agent === "workbuddy") return path.join(os.homedir(), ".workbuddy", "hooks", "auto-commit");
-  if (agent === "claude") return path.join(os.homedir(), ".claude", "hooks", "auto-commit");
-  return path.join(os.homedir(), ".zcode", "hooks", "auto-commit");
+  const profile = getAgentProfile(agent) || AGENT_PROFILES[FALLBACK_AGENT];
+  return profile.installDir(os.homedir());
 }
 function installScript(agent) { return path.join(installDir(agent), SCRIPT_NAME); }
 function installHelper(agent) { return path.join(installDir(agent), HELPER_NAME); }
@@ -30,34 +124,15 @@ const STATE_FILE = stateFile("zcode");
 
 // Same env-prefix detection the hook script uses at runtime: the installer
 // typically runs inside an agent session, which advertises its host the same
-// way. Brand-specific prefixes come before the shared pair: WorkBuddy also
-// exports the CODEBUDDY_*/CLAUDE_* variables and ZCode exports a CLAUDE_* pair
-// too, so only Claude Code's own markers (CLAUDECODE etc.) may select claude.
-// A plain shell resolves to the zcode default.
+// way. Profiles are consulted in priority order (see AGENT_PROFILES); a plain
+// shell matches none and falls back to FALLBACK_AGENT, preserving the
+// historical zcode default.
 function detectAgent() {
-  if (/\bworkbuddy\b/i.test(process.env.WORKBUDDY_PRODUCT_NAME || "") ||
-      process.env.WORKBUDDY_APP_NAME ||
-      process.env.WORKBUDDY_APP_PATH ||
-      process.env.WORKBUDDY_IS_PACKAGED ||
-      process.env.WB_SHT_INSTDIR ||
-      process.env.WORKBUDDY_NODE_FALLBACK_EXEC_PATH ||
-      process.env.WORKBUDDY_WINDOWS_APP_INSTALL_DIR ||
-      process.env.WORKBUDDY_APP_INSTALL_DIR ||
-      process.env.WORKBUDDY_PROJECT_DIR) {
-    return "workbuddy";
+  const profiles = Object.values(AGENT_PROFILES).sort((a, b) => a.priority - b.priority);
+  for (const profile of profiles) {
+    if (profile.detect(process.env)) return profile.name;
   }
-  if (process.env.ZCODE_PROJECT_DIR ||
-      process.env.ZCODE_SESSION_ID ||
-      process.env.ZCODE_NODE_FALLBACK_EXEC_PATH ||
-      process.env.ZCODE_WINDOWS_APP_INSTALL_DIR) {
-    return "zcode";
-  }
-  if (process.env.CLAUDECODE ||
-      process.env.CLAUDE_CODE_ENTRYPOINT ||
-      process.env.CLAUDE_CODE_SSE_PORT) {
-    return "claude";
-  }
-  return "zcode";
+  return FALLBACK_AGENT;
 }
 
 function parseArgs(argv) {
@@ -151,21 +226,9 @@ function workbuddyHome() {
 
 function configPath(opts) {
   if (opts.config) return path.resolve(opts.config);
-  if (opts.agent === "workbuddy") {
-    return opts.scope === "user"
-      ? path.join(workbuddyHome(), "settings.json")
-      : path.join(projectDir(opts), ".workbuddy", "settings.json");
-  }
-  if (opts.agent === "claude") {
-    // Claude Code's documented settings layout: shared user settings and
-    // per-project settings.json under .claude/.
-    return opts.scope === "user"
-      ? path.join(os.homedir(), ".claude", "settings.json")
-      : path.join(projectDir(opts), ".claude", "settings.json");
-  }
-  return opts.scope === "user"
-    ? path.join(os.homedir(), ".zcode", "cli", "config.json")
-    : path.join(projectDir(opts), ".zcode", "config.json");
+  const profile = getAgentProfile(opts.agent) || AGENT_PROFILES[FALLBACK_AGENT];
+  const paths = profile.configPaths(projectDir(opts), os.homedir());
+  return opts.scope === "user" ? paths.user : paths.workspace;
 }
 
 function otherConfigPath(opts) {
@@ -298,18 +361,14 @@ function stripOurHooks(hooks) {
   return removed;
 }
 
-function ensureStopHook(config, bash, script, timeoutMs, agent) {
-  if (config.hooks !== undefined &&
-      (config.hooks === null || typeof config.hooks !== "object" || Array.isArray(config.hooks))) {
-    throw new Error("Existing 'hooks' value is not a JSON object; refusing to modify it");
-  }
-  if (!config.hooks) config.hooks = {};
-  const hooks = config.hooks;
-  stripOurHooks(hooks);
-
-  if (agent === "workbuddy") {
-    // No hooks.enabled and no events layer in the WorkBuddy layout; the
-    // timeout unit is whole seconds.
+// Hook JSON schema writers, keyed by AGENT_PROFILES[...].hookSchema. A new
+// agent needs an entry here only when its hook layout is genuinely new; the
+// prologue (hooks object validation + stripOurHooks) is shared below.
+const HOOK_SCHEMA_WRITERS = {
+  // WorkBuddy: flat hooks.Stop[] with a quoted command string; no
+  // hooks.enabled and no events layer; whole-second timeout. (Verified
+  // against a real .workbuddy/settings.json entry.)
+  "command-flat"(hooks, bash, script, timeoutMs) {
     if (hooks.Stop !== undefined && !Array.isArray(hooks.Stop)) {
       throw new Error("Existing 'hooks.Stop' value is not an array; refusing to modify it");
     }
@@ -322,13 +381,10 @@ function ensureStopHook(config, bash, script, timeoutMs, agent) {
       }]
     });
     return hooks;
-  }
-
-  if (agent === "claude") {
-    // Claude Code settings.json uses the same flat hooks.Stop[] + quoted
-    // command-string family as WorkBuddy, plus a per-group matcher (unused
-    // for Stop but part of the documented schema) and whole-second timeout;
-    // there is no hooks.enabled flag.
+  },
+  // Claude Code uses the same command-string family plus a per-group matcher
+  // (unused for Stop but part of the documented schema); no hooks.enabled.
+  "command-flat-matcher"(hooks, bash, script, timeoutMs) {
     if (hooks.Stop !== undefined && !Array.isArray(hooks.Stop)) {
       throw new Error("Existing 'hooks.Stop' value is not an array; refusing to modify it");
     }
@@ -342,30 +398,47 @@ function ensureStopHook(config, bash, script, timeoutMs, agent) {
       }]
     });
     return hooks;
+  },
+  // ZCode nests entries under hooks.events.<Event>[] as process argv and
+  // requires hooks.enabled: true (required for configuration-file hooks; the
+  // installer warns when it also enables other hooks in the file).
+  "process-events"(hooks, bash, script, timeoutMs) {
+    if (hooks.events !== undefined &&
+        (hooks.events === null || typeof hooks.events !== "object" || Array.isArray(hooks.events))) {
+      throw new Error("Existing 'hooks.events' value is not a JSON object; refusing to modify it");
+    }
+    if (!hooks.events) hooks.events = {};
+    const events = hooks.events;
+    if (events.Stop !== undefined && !Array.isArray(events.Stop)) {
+      throw new Error("Existing 'hooks.events.Stop' value is not an array; refusing to modify it");
+    }
+    // stripOurHooks drops empty event arrays; re-create Stop before appending.
+    if (!Array.isArray(events.Stop)) events.Stop = [];
+    events.Stop.push({
+      hooks: [{
+        type: "process",
+        command: bash,
+        args: [script],
+        timeoutMs: timeoutMs,
+        statusMessage: "Auto-commit checkpoint"
+      }]
+    });
+    hooks.enabled = true;
+    return hooks;
   }
+};
 
-  if (hooks.events !== undefined &&
-      (hooks.events === null || typeof hooks.events !== "object" || Array.isArray(hooks.events))) {
-    throw new Error("Existing 'hooks.events' value is not a JSON object; refusing to modify it");
+function ensureStopHook(config, bash, script, timeoutMs, agent) {
+  const profile = getAgentProfile(agent) || AGENT_PROFILES[FALLBACK_AGENT];
+  const writer = HOOK_SCHEMA_WRITERS[profile.hookSchema];
+  if (!writer) throw new Error("Unknown hook schema: " + profile.hookSchema);
+  if (config.hooks !== undefined &&
+      (config.hooks === null || typeof config.hooks !== "object" || Array.isArray(config.hooks))) {
+    throw new Error("Existing 'hooks' value is not a JSON object; refusing to modify it");
   }
-  if (!hooks.events) hooks.events = {};
-  const events = hooks.events;
-  if (events.Stop !== undefined && !Array.isArray(events.Stop)) {
-    throw new Error("Existing 'hooks.events.Stop' value is not an array; refusing to modify it");
-  }
-  // stripOurHooks drops empty event arrays; re-create Stop before appending.
-  if (!Array.isArray(events.Stop)) events.Stop = [];
-  events.Stop.push({
-    hooks: [{
-      type: "process",
-      command: bash,
-      args: [script],
-      timeoutMs: timeoutMs,
-      statusMessage: "Auto-commit checkpoint"
-    }]
-  });
-  hooks.enabled = true;
-  return hooks;
+  if (!config.hooks) config.hooks = {};
+  stripOurHooks(config.hooks);
+  return writer(config.hooks, bash, script, timeoutMs);
 }
 
 function winSlashPath(p) {
@@ -544,6 +617,10 @@ module.exports = {
   SKILL_ROOT,
   ASSET_DIR,
   AGENTS,
+  AGENT_PROFILES,
+  FALLBACK_AGENT,
+  getAgentProfile,
+  HOOK_SCHEMA_WRITERS,
   INSTALL_DIR,
   INSTALL_SCRIPT,
   INSTALL_HELPER,

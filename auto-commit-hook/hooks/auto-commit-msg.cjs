@@ -353,11 +353,25 @@ function loadManualProvider() {
   return { url, key, models, kind };
 }
 
+// Commit-message model sources per agent — the runtime mirror of the
+// install-side registry in scripts/lib.cjs. The hook script reports CodeBuddy
+// as "codebuddy:<host>"; aliases match on the prefix before the colon. An
+// unknown agent tries the sources in UNKNOWN_SOURCE_ORDER until one is
+// actually available. Payload extraction above is deliberately field-driven
+// rather than agent-driven; only the model source dispatches on identity.
+const MODEL_SOURCES = {
+  zcode: loadZcodeProvider,
+  workbuddy: loadWorkbuddyProvider,
+  claude: loadClaudeProvider
+};
+const MODEL_SOURCE_ALIASES = { codebuddy: "workbuddy" };
+const UNKNOWN_SOURCE_ORDER = ["claude", "workbuddy", "zcode"];
+
 // Resolution order for the message model: the manual config saved by
-// scripts/setup-llm.cjs first, then the session-derived source (WorkBuddy's
-// loopback proxy from the hook environment, ZCode's provider config from
-// disk, Claude Code's ANTHROPIC_* environment). AUTOCOMMIT_LLM_* env
-// overrides win over everything.
+// scripts/setup-llm.cjs first, then the session-derived source for the
+// detected agent (WorkBuddy's loopback proxy from the hook environment,
+// ZCode's provider config from disk, Claude Code's ANTHROPIC_* environment).
+// AUTOCOMMIT_LLM_* env overrides win over everything.
 function loadProvider() {
   const manual = loadManualProvider();
   if (manual) {
@@ -370,12 +384,16 @@ function loadProvider() {
         : manual.models
     };
   }
-  const agent = process.env.AUTOCOMMIT_AGENT || "";
-  if (/^(workbuddy|codebuddy)/.test(agent)) return loadWorkbuddyProvider();
-  if (agent === "zcode") return loadZcodeProvider();
-  if (agent === "claude") return loadClaudeProvider();
+  const agent = String(process.env.AUTOCOMMIT_AGENT || "").toLowerCase();
+  const base = agent.split(":")[0];
+  const key = MODEL_SOURCES[agent] ? agent : MODEL_SOURCE_ALIASES[base];
+  if (key && MODEL_SOURCES[key]) return MODEL_SOURCES[key]();
   // Unknown host or manual run: use whichever source is actually available.
-  return loadClaudeProvider() || loadWorkbuddyProvider() || loadZcodeProvider();
+  for (const name of UNKNOWN_SOURCE_ORDER) {
+    const provider = MODEL_SOURCES[name]();
+    if (provider) return provider;
+  }
+  return null;
 }
 
 // Concatenate delta.content out of an SSE response. The proxy interleaves
@@ -587,4 +605,4 @@ if (require.main === module) {
   main().catch(() => {});
 }
 
-module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };
+module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };
