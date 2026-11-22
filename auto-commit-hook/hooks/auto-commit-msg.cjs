@@ -71,11 +71,19 @@ const TYPES = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor"
 // entries and subagent sidechains are skipped). Only the tail of the file is
 // read so a long session cannot balloon the hook runtime.
 function lastAssistantFromTranscript(file) {
+  let path = String(file || "");
+  // Windows node cannot stat Git-Bash style /c/... paths; hand-written
+  // payloads and debugging scripts sometimes use them. Real agent payloads
+  // send native paths, so this is only a fallback.
+  if (process.platform === "win32") {
+    const m = /^\/([a-z])\/(.*)$/i.exec(path);
+    if (m) path = m[1].toUpperCase() + ":/" + m[2];
+  }
   let text = "";
   try {
-    const size = fs.statSync(file).size;
+    const size = fs.statSync(path).size;
     const tail = Math.min(size, 4 * 1024 * 1024);
-    const fd = fs.openSync(file, "r");
+    const fd = fs.openSync(path, "r");
     try {
       const buf = Buffer.alloc(tail);
       fs.readSync(fd, buf, 0, tail, size - tail);

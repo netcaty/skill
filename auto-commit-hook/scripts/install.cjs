@@ -93,7 +93,9 @@ function main() {
   console.log("  bash   : " + bash);
   if (backup) console.log("  backup : " + backup);
   if (!exists) console.log("  note   : created a new config file");
-  if (previousEnabled !== true && existingHooks > 0) {
+  // Only the zcode family sets hooks.enabled; command-string agents (workbuddy,
+  // claude) never touch the flag, so the warning below does not apply to them.
+  if (!usesCommandString && previousEnabled !== true && existingHooks > 0) {
     console.log("");
     console.log("Warning: setting hooks.enabled=true also enables " + existingHooks +
       " existing configuration hook(s) in this file.");
