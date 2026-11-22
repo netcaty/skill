@@ -77,7 +77,26 @@ else
   done
 fi
 
+# Record where future updates should come from. status.cjs reads this file to
+# find the source checkout when checking the installed copies for drift.
+# cygpath -m keeps the JSON valid on Windows (forward slashes, still accepted
+# by node's path functions).
+installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+if [ "$MODE" = local ]; then
+  if command -v cygpath >/dev/null 2>&1; then
+    source_native=$(cygpath -m "$script_dir")
+  else
+    source_native=$script_dir
+  fi
+  printf '{\n  "source": "%s",\n  "mode": "local",\n  "installedAt": "%s"\n}\n' \
+    "$source_native" "$installed_at" > "$SKILL_DIR/.source.json"
+else
+  printf '{\n  "source": "https://github.com/%s",\n  "mode": "download",\n  "installedAt": "%s"\n}\n' \
+    "$REPO" "$installed_at" > "$SKILL_DIR/.source.json"
+fi
+
 log "skill directory: $SKILL_DIR"
 log "Hook not registered. To enable auto-commit later, run:"
 log "  node \"$SKILL_DIR/scripts/install.cjs\""
 log "  or type '安装 hook' in the agent's dialog box."
+log "To update later, re-run this script (or type '更新 hook' in the agent's dialog box)."

@@ -43,6 +43,7 @@ skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入�
 - agent（`zcode` / `workbuddy` / `claude`）从会话环境自动推断，不用手动指定
 - 默认 user scope（对本机所有项目生效）；可限定当前项目
 - 装完可随时调整：输入「项目级别启用 hook」改为仅当前项目生效；「禁用 hook」撤销；「查看 hook 状态」查看hook安装状态
+- 「更新 hook」/「更新 skill」把已安装副本刷新到最新：`status.cjs` 会比对文件哈希找出过期文件，本地 checkout 优先（重跑 `install.sh` + `install.cjs`），没有 checkout 时回退 GitHub 重新下载
 - 手动指定提交信息用的模型端点：输入「设置 LLM 配置：url=… key=… model=…」；「查看 LLM 配置」/「清除 LLM 配置」维护
 - 需要重启 agent 会话（或重开工作区）才会加载 hook
 

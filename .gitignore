@@ -1,2 +1,6 @@
 # ZCode / WorkBuddy 工作区本地配置（hook 注册等），不进仓库
 .zcode/
+
+# Claude Code 本地 hook 调试配置与探针输出
+.claude/settings.local.json
+.claude/hook-dump/

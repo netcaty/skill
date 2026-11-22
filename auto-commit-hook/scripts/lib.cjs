@@ -3,6 +3,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 
 const SKILL_ROOT = path.resolve(__dirname, "..");
@@ -10,6 +11,10 @@ const ASSET_DIR = path.join(SKILL_ROOT, "hooks");
 const SCRIPT_NAME = "auto-commit.sh";
 const HELPER_NAME = "auto-commit-msg.cjs";
 const DEFAULT_TIMEOUT_MS = 30000;
+
+// The two hook files install.cjs copies to the agent's asset directory. The
+// bundler/checkout side of the pair is ASSET_DIR.
+const ASSET_FILES = [SCRIPT_NAME, HELPER_NAME];
 
 // ---------------------------------------------------------------------------
 // Agent registry — the authoritative install-side facts per supported agent.
@@ -142,6 +147,7 @@ function parseArgs(argv) {
     agentSource: "",
     project: "",
     config: "",
+    source: "",
     timeoutMs: DEFAULT_TIMEOUT_MS,
     purge: false,
     dryRun: false,
@@ -168,6 +174,9 @@ function parseArgs(argv) {
         break;
       case "--config":
         opts.config = take();
+        break;
+      case "--source":
+        opts.source = take();
         break;
       case "--timeout":
         opts.timeoutMs = Number(take());
@@ -587,6 +596,76 @@ function installStatusIn(file) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Update detection — the skill lives in three places that go stale
+// independently: this checkout/skill directory (SKILL_ROOT), the staged skill
+// directory (~/.agents/skills/auto-commit-hook/, written by install.sh) and
+// the agent's asset copy (installDir(), written by install.cjs). status.cjs
+// hashes UPDATABLE_FILES across them and reports which pairs differ.
+// ---------------------------------------------------------------------------
+
+// Everything install.sh stages. Must stay in sync with the FILES list in the
+// repository's install.sh.
+const UPDATABLE_FILES = [
+  "SKILL.md",
+  "hooks/auto-commit.sh",
+  "hooks/auto-commit-msg.cjs",
+  "scripts/lib.cjs",
+  "scripts/install.cjs",
+  "scripts/uninstall.cjs",
+  "scripts/status.cjs",
+  "scripts/setup-llm.cjs"
+];
+
+// Where install.sh stages the skill directory (same default and env override
+// as its SKILL_DIR).
+function skillInstallDir() {
+  return process.env.AUTOCOMMIT_INSTALL_DIR ||
+    path.join(os.homedir(), ".agents", "skills", "auto-commit-hook");
+}
+
+function hashFile(file) {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+// Hash-compare `files` (default UPDATABLE_FILES) between two directories.
+// Missing files are reported separately from differing content so a caller
+// can tell an incomplete install from a stale one.
+function compareDirs(srcDir, dstDir, files) {
+  const result = { same: true, differing: [], missingInSrc: [], missingInDst: [] };
+  for (const rel of files || UPDATABLE_FILES) {
+    const srcHash = hashFile(path.join(srcDir, rel));
+    const dstHash = hashFile(path.join(dstDir, rel));
+    if (srcHash === null) { result.missingInSrc.push(rel); result.same = false; }
+    else if (dstHash === null) { result.missingInDst.push(rel); result.same = false; }
+    else if (srcHash !== dstHash) { result.differing.push(rel); result.same = false; }
+  }
+  return result;
+}
+
+// The local checkout to update from: --source flag, AUTOCOMMIT_SOURCE_DIR,
+// then the .source.json install.sh writes (local mode only). Empty string
+// when nothing records a checkout — the caller falls back to SKILL_ROOT or
+// to install.sh's download mode.
+function resolveSourceDir(flag) {
+  if (flag) return path.resolve(flag);
+  if (process.env.AUTOCOMMIT_SOURCE_DIR) {
+    return path.resolve(process.env.AUTOCOMMIT_SOURCE_DIR);
+  }
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(skillInstallDir(), ".source.json"), "utf8"));
+    if (meta && meta.mode === "local" && typeof meta.source === "string" &&
+        isFile(path.join(meta.source, "auto-commit-hook", "SKILL.md"))) {
+      return path.resolve(meta.source);
+    }
+  } catch {}
+  return "";
+}
+
 function gitCheck(project) {
   try {
     const out = execFileSync("git", ["-C", project, "rev-parse", "--is-inside-work-tree"], {
@@ -616,6 +695,7 @@ function hookSummary(hook) {
 module.exports = {
   SKILL_ROOT,
   ASSET_DIR,
+  ASSET_FILES,
   AGENTS,
   AGENT_PROFILES,
   FALLBACK_AGENT,
@@ -626,6 +706,11 @@ module.exports = {
   INSTALL_HELPER,
   STATE_FILE,
   DEFAULT_TIMEOUT_MS,
+  UPDATABLE_FILES,
+  skillInstallDir,
+  hashFile,
+  compareDirs,
+  resolveSourceDir,
   parseArgs,
   detectAgent,
   projectDir,

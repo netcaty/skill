@@ -1,11 +1,12 @@
 ---
 name: auto-commit-hook
 description: >-
-  Install, uninstall, inspect, or troubleshoot the automatic git checkpoint Stop hook
-  (auto-commit) for ZCode/WorkBuddy/Claude Code workspaces. Use when the user asks to
-  enable or disable auto-commit, install or remove the Stop hook, set up per-turn git
-  checkpoints, or diagnose why automatic commits are not happening.
-  触发词：启用/禁用 自动提交，安装/卸载 hook。
+  Install, uninstall, update, inspect, or troubleshoot the automatic git checkpoint
+  Stop hook (auto-commit) for ZCode/WorkBuddy/Claude Code workspaces. Use when the
+  user asks to enable or disable auto-commit, install, remove, update or upgrade the
+  Stop hook or the installed skill, set up per-turn git checkpoints, or diagnose why
+  automatic commits are not happening.
+  触发词：启用/禁用 自动提交，安装/卸载/更新/升级 hook 或 skill。
 ---
 
 # Auto-commit hook
@@ -22,7 +23,7 @@ The hook is a pair of scripts bundled under `hooks/`:
 For machines that only have the repository URL (no local checkout):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/netcaty/zcode-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
 The script only stages this skill directory to `~/.agents/skills/auto-commit-hook/`
@@ -98,6 +99,38 @@ hook scripts. Without the agent's env vars, the executables live in
 as well) — the hook resolves the real binary from `Info.plist`
 (`CFBundleExecutable`) instead of assuming the bundle name.
 
+## Update the installed skill
+
+The installed copies live in two places that go stale independently:
+`~/.agents/skills/auto-commit-hook/` (staged by `install.sh`) and the hook
+assets `~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status.cjs`
+hashes the 8 installed files and reports drift in its `update` section
+(`--json` adds an `update` object to every result):
+
+```bash
+node scripts/status.cjs
+node scripts/status.cjs --source /path/to/skill-checkout   # when no .source.json
+```
+
+The source checkout is remembered in
+`~/.agents/skills/auto-commit-hook/.source.json` (written by `install.sh` —
+local mode records the checkout path, download mode the repo URL), so
+`status.cjs` usually finds it without `--source`. When no local checkout is
+recorded, the skill-dir comparison is skipped and the agent falls back to the
+download update below.
+
+To refresh (every step is idempotent; the hook registration in the agent
+config is untouched):
+
+1. Refresh the skill directory: run `install.sh` from the checkout
+   (`bash install.sh` — local mode), or, without a checkout, re-run the
+   curl one-liner above (download mode).
+2. Refresh the hook assets: `node scripts/install.cjs`.
+3. Re-run `node scripts/status.cjs` and expect `up to date` on both lines.
+
+Hook assets take effect on the next Stop event (the hook re-reads its scripts
+every turn); updated `SKILL.md` and `scripts/` apply to new sessions.
+
 ## Dialog follow-ups
 
 After installing, tell the user the dialog prompts — not raw node commands:
@@ -112,6 +145,11 @@ removes it. When the user types them:
 - `禁用 hook`: run `node scripts/status.cjs` first, then uninstall every
   installed scope (`node scripts/uninstall.cjs`, plus `--scope workspace`
   where needed). Keep the copied scripts unless the user asks for `--purge`.
+- `更新 hook` (or `更新 skill`): run `node scripts/status.cjs` first — its
+  `update` section names the stale files. Then refresh the skill directory
+  (checkout: `bash install.sh` there; no checkout: re-run the curl one-liner),
+  run `node scripts/install.cjs`, and re-run `status.cjs` to verify. Say that
+  hook assets apply immediately while SKILL.md changes need a new session.
 - `设置 LLM 配置[: url=... key=... model=...]`: run
   `node scripts/setup-llm.cjs --url <url> --key <key> [--model <id[,id...]>]`;
   ask for any missing values first. After saving, confirm with `--show`
@@ -349,4 +387,6 @@ To use this skill in every project, copy this directory to
 After editing anything under `hooks/`, re-run `install.cjs` — the hook
 executes the copies in `~/.zcode/hooks/auto-commit/` (or `~/.workbuddy/...`,
 `~/.claude/...`),
-not this directory; `install.sh` alone does not refresh them.
+not this directory; `install.sh` alone does not refresh them. The full refresh
+flow (skill directory + hook assets, and how `status.cjs` detects drift) is in
+"Update the installed skill" above.
