@@ -1,6 +1,6 @@
 # auto-commit-hook
 
-ZCode / WorkBuddy 的 git 自动检查点 skill：每个 agent 回合结束时自动把工作区变更提交一次 —— Conventional Commits 主题 + AI 生成的正文（ZCode 读 `provider_config.json`，WorkBuddy 走会话内置的本地 VLM 代理），模型不可用时退化为本地启发式；常见敏感文件（`.env`、密钥等）自动排除在提交之外；绝不阻塞回合。
+ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回合结束时自动把工作区变更提交一次 —— Conventional Commits 主题 + AI 生成的正文（ZCode 读 `provider_config.json`，WorkBuddy 走会话内置的本地 VLM 代理），模型不可用时退化为本地启发式；常见敏感文件（`.env`、密钥等）自动排除在提交之外；绝不阻塞回合。
 
 ## 安装 skill
 
@@ -40,7 +40,7 @@ skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入�
 （项目级别）安装 hook
 ```
 
-- agent（`zcode` / `workbuddy`）从会话环境自动推断，不用手动指定
+- agent（`zcode` / `workbuddy` / `claude`）从会话环境自动推断，不用手动指定
 - 默认 user scope（对本机所有项目生效）；可限定当前项目
 - 装完可随时调整：输入「项目级别启用 hook」改为仅当前项目生效；「禁用 hook」撤销；「查看 hook 状态」查看hook安装状态
 - 手动指定提交信息用的模型端点：输入「设置 LLM 配置：url=… key=… model=…」；「查看 LLM 配置」/「清除 LLM 配置」维护

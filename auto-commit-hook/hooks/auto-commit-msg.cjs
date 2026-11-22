@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // ZCode auto-commit message generator, called by auto-commit.sh.
 //
-// stdin : Stop hook JSON payload - only the last_assistant_message field is
-//         read; everything else in the payload is ignored.
+// stdin : Stop hook JSON payload - the last_assistant_message field is read;
+//         when the payload instead carries a transcript_path (Claude Code),
+//         the last assistant text message is extracted from that JSONL
+//         transcript; everything else in the payload is ignored.
 // env   : CHANGED                     changed file paths, newline separated
 //         DIFF_FILE                    file holding the staged diff (HEAD vs
 //                                     index, pre-clipped by the shell); its
@@ -13,8 +15,8 @@
 //                                     sensitive content (written only if any;
 //                                     auto-commit.sh unstages them)
 //         AUTOCOMMIT_AGENT             agent type from auto-commit.sh (zcode |
-//                                     workbuddy | codebuddy:* | unknown);
-//                                     selects the model source below
+//                                     workbuddy | codebuddy:* | claude |
+//                                     unknown); selects the model source below
 //         WORKBUDDY_VLM_CHAT_URL / _AUTH_TOKEN / _CONTEXT
 //                                     loopback chat proxy the WorkBuddy desktop
 //                                     app injects into each session; used when
@@ -31,13 +33,23 @@
 //                                     (anthropic-messages and
 //                                     openai-chat-completions both supported),
 //                                     models are tried in modelOrder order
+//         ANTHROPIC_BASE_URL / _AUTH_TOKEN / _API_KEY / _MODEL
+//                                     the Claude Code session's Anthropic
+//                                     endpoint; used when the agent is claude
+//                                     (or, for unknown agents, when the other
+//                                     sources are unavailable). There is no
+//                                     provider config file on the Claude Code
+//                                     side, so without these (or the manual
+//                                     llm-config.json) the hook falls back to
+//                                     local heuristics
 //         AUTOCOMMIT_NO_AI=1           disable the model call
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
 //         AUTOCOMMIT_LLM_MODEL         comma-separated candidate models; default
-//                                     is the provider's modelOrder (ZCode) or
-//                                     the session model env (WorkBuddy), tried
-//                                     in order until one succeeds
+//                                     is the provider's modelOrder (ZCode), the
+//                                     session model env (WorkBuddy) or
+//                                     ANTHROPIC_MODEL (claude), tried in order
+//                                     until one succeeds
 //         AUTOCOMMIT_AI_TIMEOUT_MS     per-model timeout (default 8000)
 //         AUTOCOMMIT_AI_TOTAL_MS       overall model budget (default 13000)
 // stdout: full commit message text (Conventional Commits subject + AI body)
@@ -53,10 +65,54 @@ const path = require("path");
 
 const TYPES = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"];
 
+// Claude Code Stop payloads carry no final message; the conversation lives in
+// a JSONL transcript the payload points at. Scan backwards from the end for
+// the last main-chain assistant entry that actually has text (tool_use-only
+// entries and subagent sidechains are skipped). Only the tail of the file is
+// read so a long session cannot balloon the hook runtime.
+function lastAssistantFromTranscript(file) {
+  let text = "";
+  try {
+    const size = fs.statSync(file).size;
+    const tail = Math.min(size, 4 * 1024 * 1024);
+    const fd = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(tail);
+      fs.readSync(fd, buf, 0, tail, size - tail);
+      text = buf.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (!entry || entry.type !== "assistant" || entry.isSidechain) continue;
+    const content = entry.message && entry.message.content;
+    const out = Array.isArray(content)
+      ? content.filter(b => b && b.type === "text" && typeof b.text === "string")
+        .map(b => b.text).join("\n")
+      : (typeof content === "string" ? content : "");
+    if (out.trim()) return out;
+  }
+  return "";
+}
+
 function parsePayload(raw) {
   let payload = {};
   try { payload = JSON.parse(String(raw || "{}")) || {}; } catch {}
-  return String(payload.last_assistant_message || "").replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+  const direct = String(payload.last_assistant_message || "");
+  if (direct) return direct.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+  if (payload.transcript_path) {
+    return lastAssistantFromTranscript(String(payload.transcript_path))
+      .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+  }
+  return "";
 }
 
 function readPayload() {
@@ -241,6 +297,35 @@ function loadWorkbuddyProvider() {
   return { kind: "workbuddy", url, token, context, models };
 }
 
+// Claude Code: no provider config file and no loopback proxy. The session's
+// Anthropic endpoint arrives through the standard ANTHROPIC_* environment
+// (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY); the
+// request style is the same /v1/messages call the zcode-anthropic path uses.
+// An explicit AUTOCOMMIT_LLM_URL/_KEY override follows the llm-config.json
+// contract instead (URL used verbatim, request style from its shape).
+function loadClaudeProvider() {
+  const key = process.env.AUTOCOMMIT_LLM_KEY ||
+    process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+  const base = process.env.AUTOCOMMIT_LLM_URL || process.env.ANTHROPIC_BASE_URL;
+  if (!key || !base) return null;
+  let url;
+  let kind;
+  if (process.env.AUTOCOMMIT_LLM_URL) {
+    url = base;
+    kind = /\/messages(\/?)$/i.test(url) ? "zcode-anthropic" : undefined;
+  } else {
+    url = String(base).replace(/\/+$/, "");
+    url = /\/messages$/.test(url) ? url : url + "/v1/messages";
+    kind = "zcode-anthropic";
+  }
+  const override = process.env.AUTOCOMMIT_LLM_MODEL;
+  const candidates = override
+    ? override.split(",").map(s => s.trim()).filter(Boolean)
+    : [process.env.ANTHROPIC_MODEL].filter(Boolean);
+  if (!candidates.length) return null;
+  return { url, key, models: candidates, kind };
+}
+
 // Manual endpoint saved by scripts/setup-llm.cjs (llm-config.json). An
 // explicit user choice, so it outranks the session-derived providers; the
 // AUTOCOMMIT_LLM_* env overrides (test escape hatch) still win on top of it.
@@ -263,7 +348,8 @@ function loadManualProvider() {
 // Resolution order for the message model: the manual config saved by
 // scripts/setup-llm.cjs first, then the session-derived source (WorkBuddy's
 // loopback proxy from the hook environment, ZCode's provider config from
-// disk). AUTOCOMMIT_LLM_* env overrides win over everything.
+// disk, Claude Code's ANTHROPIC_* environment). AUTOCOMMIT_LLM_* env
+// overrides win over everything.
 function loadProvider() {
   const manual = loadManualProvider();
   if (manual) {
@@ -279,8 +365,9 @@ function loadProvider() {
   const agent = process.env.AUTOCOMMIT_AGENT || "";
   if (/^(workbuddy|codebuddy)/.test(agent)) return loadWorkbuddyProvider();
   if (agent === "zcode") return loadZcodeProvider();
+  if (agent === "claude") return loadClaudeProvider();
   // Unknown host or manual run: use whichever source is actually available.
-  return loadWorkbuddyProvider() || loadZcodeProvider();
+  return loadClaudeProvider() || loadWorkbuddyProvider() || loadZcodeProvider();
 }
 
 // Concatenate delta.content out of an SSE response. The proxy interleaves
@@ -492,4 +579,4 @@ if (require.main === module) {
   main().catch(() => {});
 }
 
-module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadManualProvider, loadWorkbuddyProvider, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };
+module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };

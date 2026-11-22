@@ -42,20 +42,23 @@ script_dir=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)
 # scan. Verified against real hook-env dumps: WorkBuddy sets WORKBUDDY_*/WB_*
 # plus the shared CODEBUDDY_*/CLAUDE_* pair but no ZCODE_*; ZCode sets
 # ZCODE_* plus the CLAUDE_* pair. Brand-specific prefixes are checked before
-# the shared CODEBUDDY_* one (WorkBuddy also sets CODEBUDDY_HOST). WorkBuddy
-# exposes WB_SHT_INSTDIR (install root) and WORKBUDDY_APP_PATH (often
+# the shared ones: only Claude Code's own markers (CLAUDECODE etc.) may select
+# claude, and WorkBuddy also sets CODEBUDDY_HOST. WorkBuddy exposes
+# WB_SHT_INSTDIR (install root) and WORKBUDDY_APP_PATH (often
 # resources/app.asar, not the exe).
 agent=unknown
 if [ -n "${WORKBUDDY_PRODUCT_NAME:-}${WORKBUDDY_APP_PATH:-}${WORKBUDDY_IS_PACKAGED:-}${WB_SHT_INSTDIR:-}${WORKBUDDY_NODE_FALLBACK_EXEC_PATH:-}${WORKBUDDY_WINDOWS_APP_INSTALL_DIR:-}${WORKBUDDY_APP_INSTALL_DIR:-}${WORKBUDDY_PROJECT_DIR:-}" ]; then
   agent=workbuddy
 elif [ -n "${ZCODE_PROJECT_DIR:-}${ZCODE_SESSION_ID:-}${ZCODE_NODE_FALLBACK_EXEC_PATH:-}${ZCODE_WINDOWS_APP_INSTALL_DIR:-}" ]; then
   agent=zcode
+elif [ -n "${CLAUDECODE:-}${CLAUDE_CODE_ENTRYPOINT:-}${CLAUDE_CODE_SSE_PORT:-}" ]; then
+  agent=claude
 elif [ -n "${CODEBUDDY_HOST:-}${CODEBUDDY_COPILOT_INTERNET_ENVIRONMENT:-}" ]; then
   agent=codebuddy:${CODEBUDDY_HOST:-codebuddy}
 fi
 
 # Model source selector for auto-commit-msg.cjs (workbuddy | codebuddy:* |
-# zcode | unknown).
+# zcode | claude | unknown).
 AUTOCOMMIT_AGENT=$agent
 export AUTOCOMMIT_AGENT
 

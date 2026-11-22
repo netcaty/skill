@@ -2,8 +2,8 @@
 name: auto-commit-hook
 description: >-
   Install, uninstall, inspect, or troubleshoot the automatic git checkpoint Stop hook
-  (auto-commit) for ZCode/WorkBuddy workspaces. Use when the user asks to enable or
-  disable auto-commit, install or remove the Stop hook, set up per-turn git
+  (auto-commit) for ZCode/WorkBuddy/Claude Code workspaces. Use when the user asks to
+  enable or disable auto-commit, install or remove the Stop hook, set up per-turn git
   checkpoints, or diagnose why automatic commits are not happening.
   触发词：启用/禁用 自动提交，安装/卸载 hook。
 ---
@@ -38,7 +38,7 @@ Use a raw.githubusercontent URL; piping the github.com page feeds HTML to bash.
 ## Quick commands
 
 Run these from this skill directory. Every command accepts `--scope user`
-(default) or `--scope workspace`. The agent (`zcode` or `workbuddy`) is
+(default) or `--scope workspace`. The agent (`zcode`, `workbuddy` or `claude`) is
 auto-detected from the session environment the same way the hook scripts do it,
 so `--agent` is only needed to override detection (e.g. installing for
 WorkBuddy from a ZCode session).
@@ -122,17 +122,20 @@ removes it. When the user types them:
 ## What install does
 
 1. Copies `hooks/auto-commit.sh` and `hooks/auto-commit-msg.cjs` to the agent's
-   asset directory: `~/.zcode/hooks/auto-commit/` (zcode) or
-   `~/.workbuddy/hooks/auto-commit/` (workbuddy).
+   asset directory: `~/.zcode/hooks/auto-commit/` (zcode),
+   `~/.workbuddy/hooks/auto-commit/` (workbuddy) or
+   `~/.claude/hooks/auto-commit/` (claude).
 2. Merges a `Stop` entry into the selected config:
 
    | agent | workspace | user |
    |---|---|---|
    | zcode | `<repo>/.zcode/config.json` | `~/.zcode/cli/config.json` |
    | workbuddy | `<repo>/.workbuddy/settings.json` | `~/.workbuddy/settings.json` |
+   | claude | `<repo>/.claude/settings.json` | `~/.claude/settings.json` |
 
    WorkBuddy's user-scope file name follows the verified project-level layout;
-   confirm it once with `status.cjs` on a real machine.
+   confirm it once with `status.cjs` on a real machine. Claude Code uses its
+   documented settings layout.
 3. Registers the hook in the agent's own format. ZCode gets `hooks.enabled: true`
    (required for configuration-file hooks; this also enables any other
    configuration hooks in that file — the installer warns):
@@ -163,6 +166,33 @@ removes it. When the user types them:
 }
 ```
 
+   Claude Code uses the same command-string family in its settings.json, plus a
+   per-group `matcher` (unused for Stop but part of the documented schema; no
+   `enabled` flag here either):
+
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "\"<bash>\" \"<script>/auto-commit.sh\"",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+   Claude Code Stop payloads carry no `last_assistant_message`; the helper
+   instead reads the JSONL transcript the payload's `transcript_path` points at
+   and takes the last assistant text message. Commit-message model sources:
+   ZCode reads `provider_config.json`, WorkBuddy uses its session loopback
+   proxy, and Claude Code uses the session's `ANTHROPIC_BASE_URL` +
+   `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` (+ `ANTHROPIC_MODEL`); the saved
+   `llm-config.json` and `AUTOCOMMIT_LLM_*` overrides outrank all of them.
+
 4. Backs up an existing config to `<config>.zcode-auto-commit.bak` and records
    the previous `hooks.enabled` value in the agent's `install-state.json`.
 5. Refuses to install in both scopes unless `--force`; two installs would commit
@@ -185,6 +215,16 @@ Expect `installed`, `enabled: true`, scripts present, and `git: ok`.
 printf '%s' '{"last_assistant_message":"test"}' \
   | ZCODE_PROJECT_DIR=/path/to/repo AUTOCOMMIT_NO_AI=1 \
     "<bash>" "$HOME/.zcode/hooks/auto-commit/auto-commit.sh"
+git -C /path/to/repo log -1
+```
+
+  Claude Code variant — the payload points at a JSONL transcript whose last
+  assistant text entry becomes the message source:
+
+```bash
+printf '%s' '{"transcript_path":"/path/to/transcript.jsonl"}' \
+  | CLAUDE_PROJECT_DIR=/path/to/repo AUTOCOMMIT_NO_AI=1 \
+    "<bash>" "$HOME/.claude/hooks/auto-commit/auto-commit.sh"
 git -C /path/to/repo log -1
 ```
 
@@ -238,10 +278,51 @@ removes the copied scripts when no remaining config references them.
 - **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
   against a real `.workbuddy/settings.json`). Other agents: the hook scripts are
   agent-agnostic — pass `--config <path>` if the target uses ZCode's
-  `hooks.events` schema, or extend `lib.cjs` with another branch.
+  `hooks.events` schema, or extend `lib.cjs` with another branch (see
+  "Adding a new agent" below for the checklist).
+- **Claude Code**: pass `--agent claude` (documented settings.json format).
+  Without a model source (`ANTHROPIC_*` env, `llm-config.json` or
+  `AUTOCOMMIT_LLM_*`) commits still happen but with generic heuristic messages.
 - **Mixed agents**: the hook scripts detect their host at runtime (env-var
-  prefixes), so the same install works under either desktop app; `--agent` only
+  prefixes), so the same install works under any supported host; `--agent` only
   selects where the hook is registered and in which format.
+
+## Adding a new agent (e.g. dsh)
+
+The hook scripts themselves are agent-agnostic; an agent only differs in five
+facts. Confirm them against the target agent (a real hook-env dump plus its
+installed config file are the ground truth — never guess), then touch the
+branch points below. Claude Code is the worked example to copy.
+
+1. **Config file paths** (workspace + user scope) → `configPath()` in
+   `scripts/lib.cjs`, and the table in "What install does" above.
+2. **Hook event schema** — nested `hooks.events.<Event>[]` vs flat
+   `hooks.<Event>[]`; `process`+argv vs `command` string; timeout unit
+   (ms vs whole seconds); any enable flag → a new branch in `ensureStopHook()`
+   in `lib.cjs` (the flat command-string family can reuse
+   `hookCommandWorkbuddy`). `eventArrays`/`isOurHook`/`stripOurHooks` already
+   iterate both known layouts, so no change is needed there for same-family
+   agents.
+3. **Stop payload fields** — does the final reply arrive as
+   `last_assistant_message` (ZCode/WorkBuddy) or as something else (Claude
+   Code's `transcript_path`)? → `parsePayload()` in `hooks/auto-commit-msg.cjs`;
+   add an extraction helper if the payload only references a transcript.
+4. **Session env markers** — the brand-specific variables the agent exports to
+   hooks → `detectAgent()` in `lib.cjs` and the host-detection chain in
+   `hooks/auto-commit.sh` (after workbuddy/zcode, before the shared
+   CODEBUDDY_* check; ZCode exports a CLAUDE_* pair, so shared prefixes must
+   never select a brand).
+5. **Model source for commit messages** — provider config file, loopback proxy,
+   or plain env endpoint → a `load<Agent>Provider()` in
+   `hooks/auto-commit-msg.cjs` wired into `loadProvider()`; no source means the
+   local-heuristic fallback still commits.
+
+Also update: the runtime candidate lists in `auto-commit.sh` only if the agent
+bundles a Node/Electron runtime worth probing (Claude Code has none — PATH node
+suffices), the `--agent` help lines in the three scripts, and this file's
+config table plus hook JSON example. Finally bump `AGENTS` in `lib.cjs` — it
+validates `--agent` and drives the per-agent asset copies, install state and
+uninstall.
 
 ## Files
 
@@ -255,5 +336,6 @@ To use this skill in every project, copy this directory to
 `~/.agents/skills/auto-commit-hook/`.
 
 After editing anything under `hooks/`, re-run `install.cjs` — the hook
-executes the copies in `~/.zcode/hooks/auto-commit/` (or `~/.workbuddy/...`),
+executes the copies in `~/.zcode/hooks/auto-commit/` (or `~/.workbuddy/...`,
+`~/.claude/...`),
 not this directory; `install.sh` alone does not refresh them.

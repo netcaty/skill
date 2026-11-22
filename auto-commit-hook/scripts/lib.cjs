@@ -10,14 +10,14 @@ const ASSET_DIR = path.join(SKILL_ROOT, "hooks");
 const SCRIPT_NAME = "auto-commit.sh";
 const HELPER_NAME = "auto-commit-msg.cjs";
 const DEFAULT_TIMEOUT_MS = 30000;
-const AGENTS = ["zcode", "workbuddy"];
+const AGENTS = ["zcode", "workbuddy", "claude"];
 
 // Each agent gets its own asset copy, so uninstalling one never breaks the
-// other on a machine that runs both.
+// others on a machine that runs several of them.
 function installDir(agent) {
-  return agent === "workbuddy"
-    ? path.join(os.homedir(), ".workbuddy", "hooks", "auto-commit")
-    : path.join(os.homedir(), ".zcode", "hooks", "auto-commit");
+  if (agent === "workbuddy") return path.join(os.homedir(), ".workbuddy", "hooks", "auto-commit");
+  if (agent === "claude") return path.join(os.homedir(), ".claude", "hooks", "auto-commit");
+  return path.join(os.homedir(), ".zcode", "hooks", "auto-commit");
 }
 function installScript(agent) { return path.join(installDir(agent), SCRIPT_NAME); }
 function installHelper(agent) { return path.join(installDir(agent), HELPER_NAME); }
@@ -30,9 +30,10 @@ const STATE_FILE = stateFile("zcode");
 
 // Same env-prefix detection the hook script uses at runtime: the installer
 // typically runs inside an agent session, which advertises its host the same
-// way. WorkBuddy is checked first because it also exports the shared
-// CODEBUDDY_*/CLAUDE_* pair; anything else (ZCode session or a plain shell)
-// resolves to the zcode default.
+// way. Brand-specific prefixes come before the shared pair: WorkBuddy also
+// exports the CODEBUDDY_*/CLAUDE_* variables and ZCode exports a CLAUDE_* pair
+// too, so only Claude Code's own markers (CLAUDECODE etc.) may select claude.
+// A plain shell resolves to the zcode default.
 function detectAgent() {
   if (/\bworkbuddy\b/i.test(process.env.WORKBUDDY_PRODUCT_NAME || "") ||
       process.env.WORKBUDDY_APP_NAME ||
@@ -44,6 +45,17 @@ function detectAgent() {
       process.env.WORKBUDDY_APP_INSTALL_DIR ||
       process.env.WORKBUDDY_PROJECT_DIR) {
     return "workbuddy";
+  }
+  if (process.env.ZCODE_PROJECT_DIR ||
+      process.env.ZCODE_SESSION_ID ||
+      process.env.ZCODE_NODE_FALLBACK_EXEC_PATH ||
+      process.env.ZCODE_WINDOWS_APP_INSTALL_DIR) {
+    return "zcode";
+  }
+  if (process.env.CLAUDECODE ||
+      process.env.CLAUDE_CODE_ENTRYPOINT ||
+      process.env.CLAUDE_CODE_SSE_PORT) {
+    return "claude";
   }
   return "zcode";
 }
@@ -143,6 +155,13 @@ function configPath(opts) {
     return opts.scope === "user"
       ? path.join(workbuddyHome(), "settings.json")
       : path.join(projectDir(opts), ".workbuddy", "settings.json");
+  }
+  if (opts.agent === "claude") {
+    // Claude Code's documented settings layout: shared user settings and
+    // per-project settings.json under .claude/.
+    return opts.scope === "user"
+      ? path.join(os.homedir(), ".claude", "settings.json")
+      : path.join(projectDir(opts), ".claude", "settings.json");
   }
   return opts.scope === "user"
     ? path.join(os.homedir(), ".zcode", "cli", "config.json")
@@ -305,6 +324,26 @@ function ensureStopHook(config, bash, script, timeoutMs, agent) {
     return hooks;
   }
 
+  if (agent === "claude") {
+    // Claude Code settings.json uses the same flat hooks.Stop[] + quoted
+    // command-string family as WorkBuddy, plus a per-group matcher (unused
+    // for Stop but part of the documented schema) and whole-second timeout;
+    // there is no hooks.enabled flag.
+    if (hooks.Stop !== undefined && !Array.isArray(hooks.Stop)) {
+      throw new Error("Existing 'hooks.Stop' value is not an array; refusing to modify it");
+    }
+    if (!Array.isArray(hooks.Stop)) hooks.Stop = [];
+    hooks.Stop.push({
+      matcher: "",
+      hooks: [{
+        type: "command",
+        command: hookCommandWorkbuddy(bash, script),
+        timeout: Math.max(1, Math.round(timeoutMs / 1000))
+      }]
+    });
+    return hooks;
+  }
+
   if (hooks.events !== undefined &&
       (hooks.events === null || typeof hooks.events !== "object" || Array.isArray(hooks.events))) {
     throw new Error("Existing 'hooks.events' value is not a JSON object; refusing to modify it");
@@ -333,8 +372,9 @@ function winSlashPath(p) {
   return path.resolve(p).replace(/\\/g, "/");
 }
 
-// WorkBuddy command hooks are a single shell string with quoted, forward-slash
-// paths (verified against a real .workbuddy/settings.json entry).
+// Command-string hook agents (workbuddy, claude) take a single shell string
+// with quoted, forward-slash paths (verified against a real
+// .workbuddy/settings.json entry).
 function hookCommandWorkbuddy(bash, script) {
   return '"' + winSlashPath(bash) + '" "' + winSlashPath(script) + '"';
 }

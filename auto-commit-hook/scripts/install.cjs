@@ -9,7 +9,8 @@ function main() {
       "Usage: node install.cjs [options]",
       "",
       "Options:",
-      "  --agent zcode|workbuddy  Target agent's config format; auto-detected from",
+      "  --agent zcode|workbuddy|claude",
+      "                           Target agent's config format; auto-detected from",
       "                           the session environment when omitted",
       "  --scope workspace|user   Config scope (default: user)",
       "  --project <dir>          Workspace root (default: CODEBUDDY_PROJECT_DIR /",
@@ -40,9 +41,11 @@ function main() {
   const previousEnabled = lib.previousEnabledValue(data);
   const existingHooks = lib.countAllHooks(data);
   const script = lib.installScript(opts.agent);
-  // ZCode takes the script as a POSIX argv entry (safe on Windows); WorkBuddy
-  // embeds it in a quoted forward-slash command string.
-  const scriptArg = opts.agent === "workbuddy" ? script : lib.toPosixPath(script);
+  // ZCode takes the script as a POSIX argv entry (safe on Windows); the
+  // command-string agents (workbuddy, claude) embed the native path in a
+  // quoted forward-slash command string.
+  const usesCommandString = opts.agent !== "zcode";
+  const scriptArg = usesCommandString ? script : lib.toPosixPath(script);
   lib.ensureStopHook(data, bash, scriptArg, opts.timeoutMs, opts.agent);
   const git = lib.gitCheck(project);
 
@@ -64,8 +67,8 @@ function main() {
     script,
     helper: lib.installHelper(opts.agent),
     bash,
-    hookArgs: opts.agent === "workbuddy" ? undefined : [scriptArg],
-    hookCommand: opts.agent === "workbuddy"
+    hookArgs: usesCommandString ? undefined : [scriptArg],
+    hookCommand: usesCommandString
       ? lib.hookCommandWorkbuddy(bash, script)
       : undefined,
     timeoutMs: opts.timeoutMs,

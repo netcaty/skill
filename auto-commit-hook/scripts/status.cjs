@@ -49,7 +49,8 @@ function main() {
       "Usage: node status.cjs [options]",
       "",
       "Options:",
-      "  --agent zcode|workbuddy  Target agent's config format (default: zcode)",
+      "  --agent zcode|workbuddy|claude",
+      "                           Target agent's config format (default: zcode)",
       "  --scope workspace|user   Config scope (default: user)",
       "  --project <dir>          Workspace root (default: CODEBUDDY_PROJECT_DIR /",
       "                           CLAUDE_PROJECT_DIR / ZCODE_PROJECT_DIR / cwd)",
@@ -79,7 +80,7 @@ function main() {
     console.log("  config : " + result.configPath + (result.configExists ? "" : " (missing)"));
     if (result.installed) {
       console.log("  enabled: " + (result.hook && result.hook.type === "command"
-        ? "(n/a for workbuddy command hooks)"
+        ? "(n/a for command hooks)"
         : result.enabled));
       if (result.hook && result.hook.type === "process") {
         console.log("  hook   : " + result.hook.command + " " + JSON.stringify(result.hook.args));
