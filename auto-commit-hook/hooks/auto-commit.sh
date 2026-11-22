@@ -123,6 +123,22 @@ to_posix() {
   cygpath -u "$1" 2>/dev/null || printf '%s\n' "$1"
 }
 
+# macOS .app bundles keep their real executable name in Info.plist
+# (CFBundleExecutable), and it often differs from the bundle name (e.g.
+# "Visual Studio Code.app" ships Contents/MacOS/Code), so resolve it instead
+# of guessing. Falls back to the bundle name when the plist cannot be read.
+app_exec() {
+  local bundle="$1" exe=""
+  [ -f "$bundle/Contents/Info.plist" ] || return 1
+  if command -v plutil >/dev/null 2>&1; then
+    exe=$(plutil -extract CFBundleExecutable raw -o - "$bundle/Contents/Info.plist" 2>/dev/null || true)
+  elif command -v defaults >/dev/null 2>&1; then
+    exe=$(defaults read "$bundle/Contents/Info" CFBundleExecutable 2>/dev/null || true)
+  fi
+  [ -n "$exe" ] || exe=$(basename "$bundle" .app)
+  [ -f "$bundle/Contents/MacOS/$exe" ] && printf '%s\n' "$bundle/Contents/MacOS/$exe"
+}
+
 runtime=""
 set_runtime() {
   local cand
@@ -154,21 +170,25 @@ if [ -z "$runtime" ]; then
     "${ZCODE_WINDOWS_APP_INSTALL_DIR:-}/ZCode.exe"
     "${LOCALAPPDATA:-}/Programs/ZCode/ZCode.exe"
     "/c/Program Files/ZCode/ZCode.exe"
-    "/Applications/ZCode.app/Contents/MacOS/ZCode"
-    "$HOME/Applications/ZCode.app/Contents/MacOS/ZCode"
   )
   workbuddy_paths=(
     "${WB_SHT_INSTDIR:-}/WorkBuddy.exe"
     "${LOCALAPPDATA:-}/Programs/WorkBuddy/WorkBuddy.exe"
     "/c/Program Files/WorkBuddy/WorkBuddy.exe"
     "/c/Program Files (x86)/WorkBuddy/WorkBuddy.exe"
-    "/Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy"
-    "$HOME/Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy"
   )
   codebuddy_paths=(
     "${LOCALAPPDATA:-}/Programs/CodeBuddy/CodeBuddy.exe"
-    "/Applications/CodeBuddy.app/Contents/MacOS/CodeBuddy"
   )
+  for bundle in /Applications/ZCode.app "$HOME/Applications/ZCode.app"; do
+    cand_exec=$(app_exec "$bundle") && zcode_paths+=("$cand_exec")
+  done
+  for bundle in /Applications/WorkBuddy.app "$HOME/Applications/WorkBuddy.app"; do
+    cand_exec=$(app_exec "$bundle") && workbuddy_paths+=("$cand_exec")
+  done
+  for bundle in /Applications/CodeBuddy.app "$HOME/Applications/CodeBuddy.app"; do
+    cand_exec=$(app_exec "$bundle") && codebuddy_paths+=("$cand_exec")
+  done
   node_paths=(
     "$HOME/scoop/shims/node.exe"
     "$HOME/scoop/apps/nodejs-lts/current/node.exe"
