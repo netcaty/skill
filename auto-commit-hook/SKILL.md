@@ -6,7 +6,7 @@ description: >-
   user asks to enable or disable auto-commit, install, remove, update or upgrade the
   Stop hook or the installed skill, set up per-turn git checkpoints, or diagnose why
   automatic commits are not happening.
-  触发词：启用/禁用 自动提交，安装/卸载/更新/升级 hook 或 skill。
+  触发词：启用/禁用 自动提交，安装/卸载/更新/升级 hook 或 skill，查看 hook 状态。
 ---
 
 # Auto-commit hook
@@ -75,29 +75,23 @@ node scripts/setup-llm.cjs --show
 node scripts/setup-llm.cjs --clear
 ```
 
-If `node` is not on `PATH`, run the same script with the agent's Electron runtime:
+If `node` is not on `PATH`, run the same script with the agent's Electron runtime
+(`ELECTRON_RUN_AS_NODE=1 "<app exe>" scripts/install.cjs ...`; on macOS the
+executable under `Contents/MacOS/` follows Info.plist's `CFBundleExecutable` and
+may differ from the bundle name):
 
 ```bash
-# ZCode (Windows)
-ELECTRON_RUN_AS_NODE=1 "$ZCODE_WINDOWS_APP_INSTALL_DIR/ZCode.exe" scripts/install.cjs --scope workspace
-
-# ZCode (macOS — the binary name follows Info.plist's CFBundleExecutable,
-# which may differ from the bundle name; e.g. "Visual Studio Code.app"
-# ships Contents/MacOS/Code)
-ELECTRON_RUN_AS_NODE=1 /Applications/ZCode.app/Contents/MacOS/ZCode scripts/install.cjs --scope workspace
-
-# WorkBuddy (--agent because a plain shell has no WorkBuddy env to auto-detect)
-ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy          # Windows
-ELECTRON_RUN_AS_NODE=1 /Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy scripts/install.cjs --agent workbuddy   # macOS
+ELECTRON_RUN_AS_NODE=1 "$ZCODE_WINDOWS_APP_INSTALL_DIR/ZCode.exe" scripts/install.cjs --scope workspace             # ZCode (Windows)
+ELECTRON_RUN_AS_NODE=1 /Applications/ZCode.app/Contents/MacOS/ZCode scripts/install.cjs --scope workspace           # ZCode (macOS)
+ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy                        # WorkBuddy (Windows; --agent because a plain shell has no WorkBuddy env)
+ELECTRON_RUN_AS_NODE=1 /Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy scripts/install.cjs --agent workbuddy  # WorkBuddy (macOS)
 ```
 
 The agents' bundled Node runtimes (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
 `$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`) are accepted too and tried first by the
-hook scripts. Without the agent's env vars, the executables live in
-`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy}\` (Windows) or inside the
-`/Applications/{ZCode,WorkBuddy}.app` bundles (macOS, `~/Applications` probed
-as well) — the hook resolves the real binary from `Info.plist`
-(`CFBundleExecutable`) instead of assuming the bundle name.
+hook scripts; without those env vars the executables are probed under
+`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy}\` (Windows) or the
+`/Applications/*.app` bundles (macOS, `~/Applications` probed as well).
 
 ## Update the installed skill
 
@@ -150,6 +144,10 @@ removes it. When the user types them:
   (checkout: `bash install.sh` there; no checkout: re-run the curl one-liner),
   run `node scripts/install.cjs`, and re-run `status.cjs` to verify. Say that
   hook assets apply immediately while SKILL.md changes need a new session.
+- `查看 hook 状态`: run `node scripts/status.cjs --all` (add `--json` when the
+  result is parsed programmatically). Report installed/enabled per scope and
+  the `update` section — outdated files mean an update is available (see
+  `更新 hook` above).
 - `设置 LLM 配置[: url=... key=... model=...]`: run
   `node scripts/setup-llm.cjs --url <url> --key <key> [--model <id[,id...]>]`;
   ask for any missing values first. After saving, confirm with `--show`
@@ -375,18 +373,10 @@ Steps:
 
 ## Files
 
-- `hooks/auto-commit.sh`, `hooks/auto-commit-msg.cjs` — installed verbatim
-- `scripts/lib.cjs` — config merge, hook detection, bash discovery
-- `scripts/install.cjs`, `scripts/uninstall.cjs`, `scripts/status.cjs`
-- `scripts/setup-llm.cjs` — save/show/clear a manual LLM endpoint
-  (`llm-config.json`); it outranks the session provider at runtime
+Everything under `hooks/` and `scripts/` is installed verbatim; see the
+commands above for what each script does.
 
-To use this skill in every project, copy this directory to
-`~/.agents/skills/auto-commit-hook/`.
-
-After editing anything under `hooks/`, re-run `install.cjs` — the hook
-executes the copies in `~/.zcode/hooks/auto-commit/` (or `~/.workbuddy/...`,
-`~/.claude/...`),
-not this directory; `install.sh` alone does not refresh them. The full refresh
-flow (skill directory + hook assets, and how `status.cjs` detects drift) is in
-"Update the installed skill" above.
+The hook always executes the asset copies in `~/.zcode/hooks/auto-commit/`
+(or `~/.workbuddy/...`, `~/.claude/...`) — never this directory — which is why
+refreshing takes both steps in "Update the installed skill" above, and why
+`install.sh` alone does not refresh the hook.
