@@ -737,11 +737,18 @@ async function aiDraft(text, fallback) {
       } else {
         headers["Authorization"] = "Bearer " + provider.key;
       }
+      // Anthropic endpoints: disable thinking explicitly. It is a no-op for
+      // the official API (thinking is opt-in there) and switches off the
+      // default-on thinking of GLM/Kimi/DeepSeek-style compatible endpoints,
+      // which otherwise burn the time budget before the JSON comes back. The
+      // OpenAI-style body has no cross-vendor equivalent (OpenAI rejects the
+      // field), so its endpoints keep their default.
       const body = anthropic
         ? {
             model: model,
             max_tokens: 600,
             temperature: 0.2,
+            thinking: { type: "disabled" },
             system: messages[0].content,
             messages: [{ role: "user", content: messages[1].content }]
           }
