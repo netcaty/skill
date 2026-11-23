@@ -33,7 +33,7 @@
 //                                     (anthropic-messages and
 //                                     openai-chat-completions both supported),
 //                                     models are tried in modelOrder order
-//         ANTHROPIC_BASE_URL / _AUTH_TOKEN / _API_KEY / _MODEL
+//         ANTHROPIC_BASE_URL / _AUTH_TOKEN / _API_KEY
 //                                     the Claude Code session's Anthropic
 //                                     endpoint; used when the agent is claude
 //                                     (or, for unknown agents, when the other
@@ -42,6 +42,14 @@
 //                                     side, so without these (or the manual
 //                                     llm-config.json) the hook falls back to
 //                                     local heuristics
+//         ANTHROPIC_MODEL / ANTHROPIC_SMALL_FAST_MODEL /
+//         ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL /
+//         CLAUDE_CODE_MODEL_CAPABILITIES
+//                                     Claude Code model candidates, tried in
+//                                     that order. Real sessions often set only
+//                                     the DEFAULT_* mappings and the
+//                                     capabilities list, never ANTHROPIC_MODEL
+//                                     itself
 //         AUTOCOMMIT_NO_AI=1           disable the model call
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
@@ -65,11 +73,12 @@ const path = require("path");
 
 const TYPES = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"];
 
-// Claude Code Stop payloads carry no final message; the conversation lives in
-// a JSONL transcript the payload points at. Scan backwards from the end for
-// the last main-chain assistant entry that actually has text (tool_use-only
-// entries and subagent sidechains are skipped). Only the tail of the file is
-// read so a long session cannot balloon the hook runtime.
+// Fallback message source: hosts or versions whose Stop payload omits
+// last_assistant_message point at a JSONL transcript instead. Scan backwards
+// from the end for the last main-chain assistant entry that actually has text
+// (tool_use-only and thinking-only entries, plus subagent sidechains, are
+// skipped). Only the tail of the file is read so a long session cannot balloon
+// the hook runtime.
 function lastAssistantFromTranscript(file) {
   let path = String(file || "");
   // Windows node cannot stat Git-Bash style /c/... paths; hand-written
@@ -305,6 +314,32 @@ function loadWorkbuddyProvider() {
   return { kind: "workbuddy", url, token, context, models };
 }
 
+// Claude Code model ids for the helper call, in preference order. A real
+// Claude Code 2.1.x hook environment (captured with a Stop probe) does not set
+// ANTHROPIC_MODEL at all: it exposes the session's model aliases through
+// ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL and ANTHROPIC_SMALL_FAST_MODEL,
+// plus the ids in CLAUDE_CODE_MODEL_CAPABILITIES ("id=cap,cap;id=..."). Try
+// the explicit pin first, then the small/fast model the harness uses for
+// background work, then the alias mappings, then the capability list.
+function claudeModelCandidates(override) {
+  if (override) return override.split(",").map(s => s.trim()).filter(Boolean);
+  const capabilityModels = String(process.env.CLAUDE_CODE_MODEL_CAPABILITIES || "")
+    .split(";")
+    .map(part => part.split("=")[0].trim())
+    .filter(Boolean);
+  const seen = new Set();
+  return [
+    process.env.ANTHROPIC_MODEL,
+    process.env.ANTHROPIC_SMALL_FAST_MODEL,
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    ...capabilityModels
+  ]
+    .map(m => (typeof m === "string" ? m.trim() : ""))
+    .filter(m => m && !seen.has(m) && seen.add(m));
+}
+
 // Claude Code: no provider config file and no loopback proxy. The session's
 // Anthropic endpoint arrives through the standard ANTHROPIC_* environment
 // (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY); the
@@ -326,10 +361,7 @@ function loadClaudeProvider() {
     url = /\/messages$/.test(url) ? url : url + "/v1/messages";
     kind = "zcode-anthropic";
   }
-  const override = process.env.AUTOCOMMIT_LLM_MODEL;
-  const candidates = override
-    ? override.split(",").map(s => s.trim()).filter(Boolean)
-    : [process.env.ANTHROPIC_MODEL].filter(Boolean);
+  const candidates = claudeModelCandidates(process.env.AUTOCOMMIT_LLM_MODEL);
   if (!candidates.length) return null;
   return { url, key, models: candidates, kind };
 }
@@ -605,4 +637,4 @@ if (require.main === module) {
   main().catch(() => {});
 }
 
-module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };
+module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, claudeModelCandidates, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };

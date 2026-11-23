@@ -6,7 +6,8 @@
 # plus an AI-written body; a local heuristic is used when the model is
 # unavailable. The model source follows the detected agent, exported to the
 # helper as AUTOCOMMIT_AGENT: WorkBuddy/CodeBuddy use the per-session
-# WORKBUDDY_VLM_* environment endpoint, ZCode reads provider_config.json.
+# WORKBUDDY_VLM_* environment endpoint, ZCode reads provider_config.json, and
+# Claude Code uses the session's ANTHROPIC_* endpoint/model environment.
 # Sensitive files: obvious secret names are unstaged by name (layer 1), and the
 # helper may flag more from the staged diff (layer 2); both layers are
 # best-effort and every excluded path is listed in the commit body.

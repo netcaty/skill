@@ -221,13 +221,18 @@ removes it. When the user types them:
 }
 ```
 
-   Claude Code Stop payloads carry no `last_assistant_message`; the helper
-   instead reads the JSONL transcript the payload's `transcript_path` points at
-   and takes the last assistant text message. Commit-message model sources:
-   ZCode reads `provider_config.json`, WorkBuddy uses its session loopback
-   proxy, and Claude Code uses the session's `ANTHROPIC_BASE_URL` +
-   `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` (+ `ANTHROPIC_MODEL`); the saved
-   `llm-config.json` and `AUTOCOMMIT_LLM_*` overrides outrank all of them.
+   Claude Code Stop payloads carry the final reply in `last_assistant_message`
+   (verified against Claude Code 2.1.x hook-env dumps). The helper reads that
+   field first and falls back to the JSONL transcript behind `transcript_path`
+   — taking the last main-chain assistant text entry — for hosts or versions
+   that omit it. Commit-message model sources: ZCode reads
+   `provider_config.json`, WorkBuddy uses its session loopback proxy, and
+   Claude Code uses the session's `ANTHROPIC_BASE_URL` +
+   `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`, with the model taken from
+   `ANTHROPIC_MODEL`, then `ANTHROPIC_SMALL_FAST_MODEL` /
+   `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`, then the ids listed in
+   `CLAUDE_CODE_MODEL_CAPABILITIES`; the saved `llm-config.json` and
+   `AUTOCOMMIT_LLM_*` overrides outrank all of them.
 
 4. Backs up an existing config to `<config>.zcode-auto-commit.bak` and records
    the previous `hooks.enabled` value in the agent's `install-state.json`.
@@ -254,11 +259,12 @@ printf '%s' '{"last_assistant_message":"test"}' \
 git -C /path/to/repo log -1
 ```
 
-  Claude Code variant — the payload points at a JSONL transcript whose last
-  assistant text entry becomes the message source:
+  Claude Code variant — the real Stop payload carries both
+  `last_assistant_message` and `transcript_path`; the helper prefers the field
+  and falls back to the transcript's last assistant text entry:
 
 ```bash
-printf '%s' '{"transcript_path":"/path/to/transcript.jsonl"}' \
+printf '%s' '{"transcript_path":"/path/to/transcript.jsonl","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"test"}' \
   | CLAUDE_PROJECT_DIR=/path/to/repo AUTOCOMMIT_NO_AI=1 \
     "<bash>" "$HOME/.claude/hooks/auto-commit/auto-commit.sh"
 git -C /path/to/repo log -1
@@ -317,8 +323,12 @@ removes the copied scripts when no remaining config references them.
   `hooks.events` schema, or extend `lib.cjs` with another branch (see
   "Adding a new agent" below for the checklist).
 - **Claude Code**: pass `--agent claude` (documented settings.json format).
-  Without a model source (`ANTHROPIC_*` env, `llm-config.json` or
-  `AUTOCOMMIT_LLM_*`) commits still happen but with generic heuristic messages.
+  The commit-message model comes from the session's `ANTHROPIC_BASE_URL` +
+  `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` and, in order, `ANTHROPIC_MODEL`,
+  `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`,
+  then the ids in `CLAUDE_CODE_MODEL_CAPABILITIES`; a saved `llm-config.json`
+  or `AUTOCOMMIT_LLM_*` outranks them. Without any model source commits still
+  happen but with generic heuristic messages.
 - **Mixed agents**: the hook scripts detect their host at runtime (env-var
   prefixes), so the same install works under any supported host; `--agent` only
   selects where the hook is registered and in which format.
