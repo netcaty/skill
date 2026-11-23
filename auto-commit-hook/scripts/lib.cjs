@@ -829,6 +829,17 @@ function gitCheck(project) {
   }
 }
 
+// Classify a failed gitCheck so install and status give the same advice: only
+// the ownership failure has the safe.directory remedy; a plain non-repository
+// is an expected skip for a user-scope hook, and anything else (missing git,
+// unreadable path) is reported as-is.
+function gitProblem(detail) {
+  const first = String(detail || "git rev-parse failed").trim().split(/\r?\n/)[0];
+  if (/dubious ownership/i.test(first)) return { kind: "ownership", detail: first };
+  if (/not a git repository/i.test(first)) return { kind: "not-a-repo", detail: first };
+  return { kind: "other", detail: first };
+}
+
 function hookSummary(hook) {
   if (!hook) return null;
   return {
@@ -901,5 +912,6 @@ module.exports = {
   takeInstallState,
   installStatusIn,
   gitCheck,
+  gitProblem,
   hookSummary
 };

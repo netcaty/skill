@@ -122,18 +122,19 @@ function printUpdate(update) {
 // A missing git, a repository that is not a work tree, and a repository owned
 // by another user all make the hook skip silently. Only the ownership case has
 // the safe.directory remedy; the others are expected states, not defects.
+// gitProblem() keeps this classification identical to install's warning.
 function printGit(result) {
   const git = result.git;
   if (git.ok) {
     console.log("  git    : ok");
     return;
   }
-  const detail = (git.detail || "git rev-parse failed").trim();
-  console.log("  git    : not usable - " + detail.split(/\r?\n/)[0]);
-  if (/dubious ownership/i.test(detail)) {
+  const problem = lib.gitProblem(git.detail);
+  console.log("  git    : not usable - " + problem.detail);
+  if (problem.kind === "ownership") {
     console.log("           fix: git config --global --add safe.directory " +
       result.project.replace(/\\/g, "/"));
-  } else if (/not a git repository/i.test(detail)) {
+  } else if (problem.kind === "not-a-repo") {
     console.log("           note: not a working tree; the hook skips turns here");
   }
 }

@@ -121,10 +121,22 @@ function main() {
       " existing configuration hook(s) in this file.");
   }
   if (!git.ok) {
+    // Only ownership has the safe.directory remedy; a non-repository is an
+    // expected skip for a user-scope hook, and any other failure is shown
+    // as git reported it.
+    const problem = lib.gitProblem(git.detail);
     console.log("");
-    console.log("Warning: git cannot access " + project + " under the current user.");
-    console.log("The hook will exit silently until this is fixed:");
-    console.log("  git config --global --add safe.directory " + project.replace(/\\/g, "/"));
+    if (problem.kind === "ownership") {
+      console.log("Warning: git cannot access " + project + " under the current user.");
+      console.log("The hook will exit silently until this is fixed:");
+      console.log("  git config --global --add safe.directory " + project.replace(/\\/g, "/"));
+    } else if (problem.kind === "not-a-repo") {
+      console.log("Note: " + project + " is not a git repository, so the hook will skip turns here.");
+      console.log("Run git init there (or use the repository as the workspace) to enable auto-commits.");
+    } else {
+      console.log("Warning: git cannot use " + project + " (" + problem.detail + ").");
+      console.log("The hook will exit silently here until git works in this directory.");
+    }
   }
   if (disabledBy.length) {
     console.log("");
