@@ -473,7 +473,7 @@ const HOOK_SCHEMA_WRITERS = {
         command: bash,
         args: [script],
         timeoutMs: timeoutMs,
-        statusMessage: "Auto-commit checkpoint"
+        statusMessage: "Running Auto-commit Hook"
       }]
     });
     hooks.enabled = true;

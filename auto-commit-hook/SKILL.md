@@ -190,7 +190,7 @@ removes it. When the user types them:
     "command": "<bash executable>",
     "args": ["<posix path>/auto-commit.sh"],
     "timeoutMs": 30000,
-    "statusMessage": "Auto-commit checkpoint"
+    "statusMessage": "Running Auto-commit Hook"
   }]
 }
 ```
