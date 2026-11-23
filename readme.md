@@ -4,7 +4,7 @@ ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回
 
 ## 安装 skill
 
-三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。**
+三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/禁用/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
 
 ### 方式一：curl（无需 git）
 
@@ -31,22 +31,6 @@ clone 方式下脚本检测到旁边的 `auto-commit-hook/` 目录后会直接�
 ```
 
 agent 会先请求执行该命令的权限，确认后即完成安装，效果与方式一相同。Windows 下 agent 会自动改用 Git Bash 执行。
-
-## 启用 hook（可选）
-
-skill 装好后，想要"每回合自动提交"，在 agent 的对话框输入：
-
-```
-（项目级别）安装 hook
-```
-
-- agent（`zcode` / `workbuddy` / `claude`）从会话环境自动推断，不用手动指定
-- 默认 user scope（对本机所有项目生效）；可限定当前项目
-- 装完可随时调整：输入「项目级别启用 hook」改为仅当前项目生效；「禁用 hook」撤销；「查看 hook 状态」查看hook安装状态
-- 「更新 hook」/「更新 skill」把已安装副本刷新到最新：`status.cjs` 会比对文件哈希找出过期文件，本地 checkout 优先（重跑 `install.sh` + `install.cjs`），没有 checkout 时回退 GitHub 重新下载
-- 手动指定提交信息用的模型端点：输入「设置 LLM 配置：url=… key=… model=…」；「查看 LLM 配置」/「清除 LLM 配置」维护
-- 需要重启 agent 会话（或重开工作区）才会加载 hook
-
 
 ## 依赖
 
