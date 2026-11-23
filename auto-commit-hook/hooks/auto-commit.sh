@@ -9,9 +9,15 @@
 # WORKBUDDY_VLM_* environment endpoint, ZCode reads provider_config.json, and
 # Claude Code uses the session's ANTHROPIC_* endpoint/model environment.
 # Sensitive files: obvious secret names are unstaged by name (layer 1), and the
-# helper may flag more from the staged diff (layer 2); both layers are
-# best-effort and every excluded path is listed in the commit body.
-# Nothing is written to stdout: hook stdout is parsed as strict JSON, and
+# helper may flag more from the staged diff (layer 2); every excluded path is
+# listed in the commit body. A path that cannot be unstaged aborts the commit
+# instead of being committed.
+# Failures: the hook always exits 0, but real failures (git add/commit, the
+# sensitive gate, missing git) are recorded in last-run.json plus a bounded
+# auto-commit.log under the state directory, and status.cjs prints the last
+# outcome. Claude Code also gets a non-blocking systemMessage JSON on stdout;
+# AUTOCOMMIT_NOTIFY_STDOUT=1/0 forces that channel on/off for other hosts.
+# Nothing else is written to stdout: hook stdout is parsed as strict JSON, and
 # non-zero exits are recorded as hook failures.
 # Runtime: a real node from PATH when available, otherwise the host agent's
 # Electron binary run as Node via ELECTRON_RUN_AS_NODE=1 (ZCode, WorkBuddy, ...).
@@ -73,7 +79,84 @@ EOF
 AUTOCOMMIT_AGENT=$agent
 export AUTOCOMMIT_AGENT
 
-cd "${ZCODE_PROJECT_DIR:-${WORKBUDDY_PROJECT_DIR:-${CODEBUDDY_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$PWD}}}}" >/dev/null 2>&1 || exit 0
+# --- Failure visibility ------------------------------------------------------
+# The hook must never block the turn, so it always exits 0. Real failures are
+# still made visible: the last outcome lands in last-run.json and a bounded
+# auto-commit.log, status.cjs prints them, and Claude Code (whose Stop hook
+# accepts {"systemMessage":...} on stdout) gets an immediate UI message.
+# AUTOCOMMIT_STATE_DIR is a test/debug override; installed hooks use their own
+# asset directory.
+state_dir=${AUTOCOMMIT_STATE_DIR:-$script_dir}
+if ! mkdir -p "$state_dir" 2>/dev/null; then
+  state_dir=$script_dir
+fi
+state_file="$state_dir/last-run.json"
+log_file="$state_dir/auto-commit.log"
+
+# Sanitize git output for a JSON string: collapse control characters, cap the
+# length, then escape backslashes and quotes.
+json_escape() {
+  printf '%s' "$1" \
+    | tr '\r\n\t' '   ' \
+    | tr -d '\001-\010\013\014\016-\037' \
+    | cut -c1-500 \
+    | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+notify_stdout=0
+case "$agent" in
+  claude) notify_stdout=1 ;;
+esac
+case "${AUTOCOMMIT_NOTIFY_STDOUT:-}" in
+  1) notify_stdout=1 ;;
+  0) notify_stdout=0 ;;
+esac
+
+record_run() {
+  local status=$1 stage=${2:-} detail=${3:-} json ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true)
+  if [ "$status" = "ok" ]; then
+    json=$(printf '{"at":"%s","status":"ok","agent":"%s"}' "$ts" "$agent")
+  else
+    json=$(printf '{"at":"%s","status":"error","agent":"%s","stage":"%s","detail":"%s"}' \
+      "$ts" "$agent" "$(json_escape "$stage")" "$(json_escape "$detail")")
+  fi
+  printf '%s\n' "$json" > "$state_file.tmp.$$" 2>/dev/null \
+    && mv -f "$state_file.tmp.$$" "$state_file" 2>/dev/null || true
+}
+
+report_failure() {
+  local stage=$1 detail=$2 ts msg
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true)
+  msg=$(json_escape "$detail")
+  printf '%s [%s] %s: %s\n' "$ts" "$agent" "$stage" "$msg" >> "$log_file" 2>/dev/null || true
+  if [ -f "$log_file" ]; then
+    tail -n 200 "$log_file" > "$log_file.tmp.$$" 2>/dev/null \
+      && mv -f "$log_file.tmp.$$" "$log_file" 2>/dev/null || true
+  fi
+  record_run error "$stage" "$detail"
+  if [ "$notify_stdout" = "1" ]; then
+    printf '{"systemMessage":"%s","suppressOutput":true}\n' \
+      "$(json_escape "⚠ auto-commit failed ($stage): $detail")"
+  fi
+}
+
+report_success() {
+  record_run ok
+}
+
+# A missing git binary is a real failure. "Not a git work tree" is an expected
+# skip: user-scope hooks also run in projects that are not repositories.
+if ! command -v git >/dev/null 2>&1; then
+  report_failure "git" "git not found on PATH"
+  exit 0
+fi
+
+project_dir="${ZCODE_PROJECT_DIR:-${WORKBUDDY_PROJECT_DIR:-${CODEBUDDY_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$PWD}}}}"
+if ! cd "$project_dir" >/dev/null 2>&1; then
+  report_failure "project directory" "cannot enter $project_dir"
+  exit 0
+fi
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 # Read the Stop hook payload (JSON on stdin); a TTY means it was run by hand.
@@ -95,8 +178,28 @@ if git diff --quiet HEAD 2>/dev/null && [ -z "$(git ls-files --others --exclude-
   exit 0
 fi
 
-git add -A >/dev/null 2>&1 || exit 0
-git diff --cached --quiet && exit 0  # nothing stageable changed
+add_output=$(git add -A 2>&1)
+add_status=$?
+if [ "$add_status" -ne 0 ]; then
+  # A parallel git process can hold index.lock briefly; retry once before
+  # treating the stage step as a real failure.
+  sleep 0.5 2>/dev/null || sleep 1
+  add_output=$(git add -A 2>&1)
+  add_status=$?
+fi
+if [ "$add_status" -ne 0 ]; then
+  report_failure "git add" "$add_output"
+  exit 0
+fi
+# git diff --quiet exits 0 for "no staged changes" and 1 for "changes staged";
+# anything above 1 is an error worth reporting.
+diff_output=$(git diff --cached --quiet 2>&1)
+diff_status=$?
+[ "$diff_status" -eq 0 ] && exit 0  # nothing stageable changed
+if [ "$diff_status" -gt 1 ]; then
+  report_failure "git diff --cached" "exit $diff_status: $diff_output"
+  exit 0
+fi
 
 # --- sensitive-file gate, layer 1 --------------------------------------------
 # add -A staged everything, including files that must not be committed. This
@@ -106,6 +209,7 @@ git diff --cached --quiet && exit 0  # nothing stageable changed
 # the commit body so the checkpoint stays auditable. GIT_LITERAL_PATHSPECS
 # keeps file names with glob metacharacters from matching more than themselves.
 sensitive_exclude=""
+gate_failed=""
 sensitive_names=$(git diff --cached --name-only 2>/dev/null | grep -iE \
   -e '(^|/)\.env($|\.)' \
   -e '\.(pem|key|p12|pfx|jks|keystore|kdbx)$' \
@@ -116,7 +220,10 @@ sensitive_names=$(git diff --cached --name-only 2>/dev/null | grep -iE \
   | grep -ivE -e '(^|/)\.env\.(example|sample|template|dist|defaults)$' || true)
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null || true
+  if ! GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null; then
+    gate_failed="$gate_failed$f"$'\n'
+    continue
+  fi
   sensitive_exclude="$sensitive_exclude$f"$'\n'
 done <<EOF
 $sensitive_names
@@ -230,9 +337,9 @@ if [ -z "$runtime" ]; then
   done
 fi
 
-msgfile=$(mktemp) || exit 0
-difffile=$(mktemp) || exit 0
-sensitive_out=$(mktemp) || exit 0
+msgfile=$(mktemp) || { report_failure "temp file" "cannot create a temporary file"; exit 0; }
+difffile=$(mktemp) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile"; exit 0; }
+sensitive_out=$(mktemp) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile"; exit 0; }
 # Layer 2 input: the staged diff (HEAD vs index) for the model to screen; the
 # shell caps it at 20 KB and the helper clips again. Empty diff (binary-only
 # stages) simply skips the content screen.
@@ -251,9 +358,20 @@ fi
 while IFS= read -r f; do
   f=$(printf '%s' "$f" | tr -d '\r')
   [ -n "$f" ] || continue
-  GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null || true
+  if ! GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null; then
+    gate_failed="$gate_failed$f"$'\n'
+    continue
+  fi
   sensitive_exclude="$sensitive_exclude$f"$'\n'
 done < "$sensitive_out"
+# If the sensitive gate cannot unstage a flagged path, committing anyway would
+# leak it. Abort, unstage everything, and surface the failure instead.
+if [ -n "$gate_failed" ]; then
+  report_failure "sensitive gate" "could not unstage: $(printf '%s' "$gate_failed" | tr '\n' ' ')"
+  git reset -q >/dev/null 2>&1 || true
+  rm -f "$msgfile" "$difffile" "$sensitive_out"
+  exit 0
+fi
 if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
   git diff --cached --quiet && { rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
   {
@@ -263,6 +381,18 @@ if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
   } >> "$msgfile"
 fi
 
-git -c commit.gpgsign=false commit -F "$msgfile" --no-verify >/dev/null 2>&1
+commit_output=$(git -c commit.gpgsign=false commit -F "$msgfile" --no-verify 2>&1)
+commit_status=$?
+if [ "$commit_status" -eq 0 ]; then
+  report_success
+else
+  case "$commit_output" in
+    *"nothing to commit"*|*"nothing added to commit"*|*"no changes added to commit"*)
+      : ;;  # a parallel hook invocation already committed this turn
+    *)
+      report_failure "git commit" "$commit_output"
+      ;;
+  esac
+fi
 rm -f "$msgfile" "$difffile" "$sensitive_out"
 exit 0

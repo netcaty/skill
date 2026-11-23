@@ -43,6 +43,7 @@ function inspect(opts, scope) {
     bash,
     bashExists: bash ? lib.isFile(bash) : false,
     disabledBy,
+    lastRun: lib.readLastRun(opts.agent),
     git
   };
 }
@@ -169,6 +170,14 @@ function main() {
     }
     console.log("  scripts: " + (result.installExists ? "present" : "missing") +
       " (" + result.installDir + ")");
+    if (result.lastRun && result.lastRun.status === "error") {
+      console.log("  last run: FAILED " + (result.lastRun.at || "?") +
+        " (" + (result.lastRun.stage || "?") + ") " +
+        (result.lastRun.detail || ""));
+      console.log("  log    : " + path.join(result.installDir, "auto-commit.log"));
+    } else if (result.lastRun) {
+      console.log("  last run: ok " + (result.lastRun.at || ""));
+    }
     console.log("  git    : " + (result.git.ok ? "ok" : "not available - " + result.git.detail.split(/\r?\n/)[0]));
     if (!result.git.ok) {
       console.log("           fix: git config --global --add safe.directory " +

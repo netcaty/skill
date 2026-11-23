@@ -4,3 +4,8 @@
 # Claude Code 本地 hook 调试配置与探针输出
 .claude/settings.local.json
 .claude/hook-dump/
+
+# 直接运行仓库内 hook 副本时产生的运行状态（正常安装会写进 agent 资产目录）
+auto-commit-hook/hooks/last-run.json
+auto-commit-hook/hooks/auto-commit.log
+auto-commit-hook/hooks/*.tmp.*

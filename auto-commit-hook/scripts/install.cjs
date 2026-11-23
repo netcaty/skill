@@ -53,6 +53,7 @@ function main() {
   // Claude Code merges user/project/local settings, so a disable switch in any
   // of them silently stops the hook.
   const disabledBy = opts.agent === "claude" ? lib.claudeDisableFlags(project) : [];
+  const lastRun = lib.readLastRun(opts.agent);
   const script = lib.installScript(opts.agent);
   // ZCode takes the script as a POSIX argv entry (safe on Windows); the
   // command-string agents (workbuddy, claude) embed the native path in a
@@ -90,6 +91,7 @@ function main() {
     previousEnabled,
     existingOtherHooks: existingHooks,
     disabledBy,
+    lastRun,
     git
   };
 
@@ -124,6 +126,12 @@ function main() {
     console.log("");
     console.log("Warning: Claude Code will not run this hook while these settings disable hooks:");
     for (const item of disabledBy) console.log("  " + item.flag + " in " + item.file);
+  }
+  if (lastRun && lastRun.status === "error") {
+    console.log("");
+    console.log("Warning: the last recorded hook run failed (" +
+      (lastRun.stage || "?") + "): " + (lastRun.detail || ""));
+    console.log("Run node scripts/status.cjs for the full state and log path.");
   }
   if (opts.agent === "claude" && opts.scope === "workspace") {
     console.log("");

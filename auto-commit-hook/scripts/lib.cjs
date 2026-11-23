@@ -612,6 +612,18 @@ function readState(agent) {
   return { version: 1, installs: {} };
 }
 
+// Last commit attempt outcome written by hooks/auto-commit.sh. Expected skips
+// (clean tree, not a repo) leave it untouched; ok/error are recorded.
+function readLastRun(agent) {
+  try {
+    const data = JSON.parse(fs.readFileSync(
+      path.join(installDir(agent), "last-run.json"), "utf8"));
+    return data && typeof data === "object" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 function writeState(state, agent) {
   fs.mkdirSync(installDir(agent), { recursive: true });
   fs.writeFileSync(stateFile(agent), JSON.stringify(state, null, 2) + "\n", "utf8");
@@ -795,6 +807,7 @@ module.exports = {
   installAssets,
   readState,
   writeState,
+  readLastRun,
   recordInstall,
   takeInstallState,
   installStatusIn,

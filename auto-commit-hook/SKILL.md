@@ -14,7 +14,8 @@ description: >-
 This skill installs a `Stop` hook that commits workspace changes once per agent turn.
 The hook is a pair of scripts bundled under `hooks/`:
 
-- `auto-commit.sh` — guards, stages changes, commits, and always exits 0
+- `auto-commit.sh` — guards, stages changes, commits, records the outcome, and
+  always exits 0
 - `auto-commit-msg.cjs` — turns the agent's final reply into a Conventional Commits
   subject/body; uses the provider config when available and local heuristics otherwise
 
@@ -147,7 +148,9 @@ removes it. When the user types them:
 - `查看 hook 状态`: run `node scripts/status.cjs --all` (add `--json` when the
   result is parsed programmatically). Report installed/enabled per scope and
   the `update` section — outdated files mean an update is available (see
-  `更新 hook` above).
+  `更新 hook` above). A `last run: ok` line is healthy; `last run: FAILED
+  <time> (<stage>)` names the failing step and the log path under the install
+  directory, so quote it back to the user and suggest the fix.
 - `设置 LLM 配置[: url=... key=... model=...]`: run
   `node scripts/setup-llm.cjs --url <url> --key <key> [--model <id[,id...]>]`;
   ask for any missing values first. After saving, confirm with `--show`
@@ -255,7 +258,9 @@ removes it. When the user types them:
 node scripts/status.cjs --scope workspace
 ```
 
-Expect `installed`, `enabled: true`, scripts present, and `git: ok`.
+Expect `installed`, `enabled: true`, scripts present, `git: ok`, and after a
+turn `last run: ok ...`. A `last run: FAILED ...` line names the failing stage
+and the log path (see "Failure visibility").
 
 - New sessions pick up the hook. Start a new session or reopen the workspace after
   installing.
@@ -278,6 +283,29 @@ printf '%s' '{"transcript_path":"/path/to/transcript.jsonl","hook_event_name":"S
     "<bash>" "$HOME/.claude/hooks/auto-commit/auto-commit.sh"
 git -C /path/to/repo log -1
 ```
+
+## Failure visibility
+
+The hook always exits 0 and never blocks a turn, so failures are reported out
+of band instead of aborting:
+
+- Every real failure (missing git, `git add`/`git commit` errors, a sensitive
+  file that could not be unstaged) is written to `last-run.json` and appended
+  to `auto-commit.log` in the agent's asset directory. A successful commit
+  overwrites `last-run.json` with `status: "ok"`.
+- `status.cjs` prints that state: `last run: FAILED <time> (<stage>) <detail>`
+  plus the log path; `--json` exposes the same object as `lastRun`.
+- Claude Code additionally receives a non-blocking stdout payload
+  `{"systemMessage":"⚠ auto-commit failed (...)","suppressOutput":true}`, which
+  the UI shows immediately. Other hosts get no stdout by default (their hook
+  output schema is not verified); set `AUTOCOMMIT_NOTIFY_STDOUT=1` to force the
+  same JSON channel for testing.
+- Expected skips — not a repository, clean tree, merge/rebase in progress,
+  detached HEAD — are not failures and are never reported. A missing model
+  also falls back to the generic `chore: update N files` by design and is not
+  reported as a failure.
+- If a sensitive file cannot be unstaged, the hook aborts the commit, unstages
+  everything, and reports stage `sensitive gate` instead of risking a leak.
 
 ## Uninstall
 
@@ -322,10 +350,11 @@ them (the `backups/` directory is kept).
 
 ## Troubleshooting
 
-- **Nothing commits**: run `status.cjs`. Confirm the hook is installed, the
-  configured bash exists, and `git rev-parse` works under the current user. On
-  ZCode also confirm `hooks.enabled: true`; on Claude Code check workspace trust
-  and the `disableAllHooks` / `allowManagedHooksOnly` warnings. If git reports
+- **Nothing commits**: run `status.cjs`; a `last run: FAILED ...` line names the
+  failing stage and the log path. Confirm the hook is installed, the configured
+  bash exists, and `git rev-parse` works under the current user. On ZCode also
+  confirm `hooks.enabled: true`; on Claude Code check workspace trust and the
+  `disableAllHooks` / `allowManagedHooksOnly` warnings. If git reports
   `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic message** (`chore: update N files`): the helper did not run, or no model

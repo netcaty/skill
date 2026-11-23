@@ -1,6 +1,6 @@
 # auto-commit-hook
 
-ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回合结束时自动把工作区变更提交一次 —— Conventional Commits 主题 + AI 生成的正文（ZCode 读 `provider_config.json`，WorkBuddy 走会话内置的本地 VLM 代理，Claude Code 用会话的 `ANTHROPIC_*` 环境），模型不可用时退化为本地启发式；常见敏感文件（`.env`、密钥等）自动排除在提交之外；绝不阻塞回合。
+ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回合结束时自动把工作区变更提交一次 —— Conventional Commits 主题 + AI 生成的正文（ZCode 读 `provider_config.json`，WorkBuddy 走会话内置的本地 VLM 代理，Claude Code 用会话的 `ANTHROPIC_*` 环境），模型不可用时退化为本地启发式；常见敏感文件（`.env`、密钥等）自动排除在提交之外；绝不阻塞回合，失败不静默：最后结果写入 `last-run.json` / `auto-commit.log`，`status.cjs` 可查，Claude Code 还会在界面显示 systemMessage。
 
 ## 安装 skill
 
