@@ -165,9 +165,11 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 hook_input=""
 [ -t 0 ] || hook_input=$(cat 2>/dev/null)
 
-# Claude Code re-enters Stop after another Stop hook blocked the turn. That
-# intermediate event would checkpoint work that is still in flight, so skip it
-# (the field is absent on ZCode/WorkBuddy payloads).
+# A host re-enters Stop after another Stop hook blocked the turn and marks that
+# payload stop_hook_active: true. Such an intermediate event would checkpoint
+# work that is still in flight. The check is field-driven, so it applies to
+# every agent that reports the field (Claude Code, WorkBuddy, ...); hosts that
+# omit it are unaffected.
 if [ -n "$hook_input" ] && printf '%s' "$hook_input" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true'; then
   exit 0
 fi

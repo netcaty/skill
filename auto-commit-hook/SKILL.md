@@ -361,9 +361,11 @@ them (the `backups/` directory is kept).
 - Concurrent Stop events in the same repository serialize on
   `<git-dir>/auto-commit.lock`; a stale lock left by a killed hook is reclaimed
   on the next turn.
-- Claude Code re-enters `Stop` when another Stop hook blocks the turn; events
-  with `stop_hook_active: true` are skipped so checkpoints cover completed
-  turns only.
+- A host re-enters `Stop` after another Stop hook blocks the turn and marks
+  that payload `stop_hook_active: true`; such events are skipped so checkpoints
+  cover completed turns only. The check is field-driven and applies to every
+  agent that reports the field (Claude Code, WorkBuddy, ...); hosts that omit
+  it are unaffected.
 - Workspace config lives under `.zcode/`. If that directory is not ignored, the
   auto-commit hook will commit the config file itself.
 - Claude Code merges hooks from user settings, project `settings.json` and
