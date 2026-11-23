@@ -170,12 +170,12 @@ gitdir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
 [ -e "$gitdir/MERGE_HEAD" ] && exit 0
 [ -d "$gitdir/rebase-merge" ] && exit 0
 [ -d "$gitdir/rebase-apply" ] && exit 0
-[ -n "$(git ls-files -u)" ] && exit 0
+[ -n "$(git ls-files -u 2>/dev/null)" ] && exit 0
 # A detached HEAD would leave the checkpoint unreferenced once HEAD moves on.
-git symbolic-ref -q HEAD >/dev/null || exit 0
+git symbolic-ref -q HEAD >/dev/null 2>&1 || exit 0
 
 # Skip when the tree is clean (no staged/unstaged/untracked changes)
-if git diff --quiet HEAD 2>/dev/null && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+if git diff --quiet HEAD 2>/dev/null && [ -z "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
   exit 0
 fi
 
@@ -184,7 +184,7 @@ add_status=$?
 if [ "$add_status" -ne 0 ]; then
   # A parallel git process can hold index.lock briefly; retry once before
   # treating the stage step as a real failure.
-  sleep 0.5 2>/dev/null || sleep 1
+  sleep 0.5 2>/dev/null || sleep 1 2>/dev/null
   add_output=$(git add -A 2>&1)
   add_status=$?
 fi
@@ -338,9 +338,9 @@ if [ -z "$runtime" ]; then
   done
 fi
 
-msgfile=$(mktemp) || { report_failure "temp file" "cannot create a temporary file"; exit 0; }
-difffile=$(mktemp) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile"; exit 0; }
-sensitive_out=$(mktemp) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile"; exit 0; }
+msgfile=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; exit 0; }
+difffile=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile"; exit 0; }
+sensitive_out=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile"; exit 0; }
 # Layer 2 input: the staged diff (HEAD vs index) for the model to screen; the
 # shell caps it at 20 KB and the helper clips again. Empty diff (binary-only
 # stages) simply skips the content screen.
@@ -374,7 +374,7 @@ if [ -n "$gate_failed" ]; then
   exit 0
 fi
 if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
-  git diff --cached --quiet && { rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
+  git diff --cached --quiet 2>/dev/null && { rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
   {
     printf '\n'
     printf '%s\n' "⚠ excluded from this commit (sensitive):"
