@@ -296,11 +296,13 @@ function readConfig(file) {
 // config: a workspace config may be gitignored while its `.bak` sibling is
 // not, and the hook's own `git add -A` would then commit a copy of local
 // settings (which can contain tokens). The path hash keeps user, workspace
-// and --config targets that share a basename apart.
+// and --config targets that share a basename apart. The suffix is
+// agent-neutral: earlier versions wrote `.zcode-auto-commit.bak`, so an old
+// backup from that era can still sit next to the new one.
 function backupFile(file, agent) {
   const dir = path.join(installDir(agent), "backups");
   const hash = crypto.createHash("sha1").update(path.resolve(file)).digest("hex").slice(0, 8);
-  return path.join(dir, path.basename(file) + "." + hash + ".zcode-auto-commit.bak");
+  return path.join(dir, path.basename(file) + "." + hash + ".auto-commit.bak");
 }
 
 function writeConfig(file, data, agent) {
