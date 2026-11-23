@@ -447,7 +447,7 @@ const HOOK_SCHEMA_WRITERS = {
         type: "command",
         command: hookCommandWorkbuddy(bash, script),
         timeout: Math.max(1, Math.round(timeoutMs / 1000)),
-        statusMessage: "Auto-commit checkpoint"
+        statusMessage: "Running Auto-commit Hook"
       }]
     });
     return hooks;

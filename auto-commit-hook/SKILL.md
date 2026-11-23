@@ -221,7 +221,7 @@ removes it. When the user types them:
         "type": "command",
         "command": "\"<bash>\" \"<script>/auto-commit.sh\"",
         "timeout": 30,
-        "statusMessage": "Auto-commit checkpoint"
+        "statusMessage": "Running Auto-commit Hook"
       }]
     }]
   }
