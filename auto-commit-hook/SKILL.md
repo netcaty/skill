@@ -91,32 +91,23 @@ node scripts/setup-llm.cjs --show
 node scripts/setup-llm.cjs --clear
 ```
 
-A Node.js on `PATH` is optional: `scripts/run.sh` discovers whatever runtime the
-machine has — including the agent's own Electron executable, run as Node — and
-execs the requested script with it. The hook performs the same discovery on every
-turn, so a machine with only ZCode/WorkBuddy installed still gets AI commit
-messages.
+If `node` is not on `PATH`, run the same script with the agent's Electron runtime
+(`ELECTRON_RUN_AS_NODE=1 "<app exe>" scripts/install.cjs ...`; on macOS the
+executable under `Contents/MacOS/` follows Info.plist's `CFBundleExecutable` and
+may differ from the bundle name):
 
 ```bash
-bash scripts/run.sh install.cjs --scope workspace
-bash scripts/run.sh status.cjs --all
-bash scripts/run.sh --print        # which runtime would be used, without running
+ELECTRON_RUN_AS_NODE=1 "$ZCODE_WINDOWS_APP_INSTALL_DIR/ZCode.exe" scripts/install.cjs --scope workspace             # ZCode (Windows)
+ELECTRON_RUN_AS_NODE=1 /Applications/ZCode.app/Contents/MacOS/ZCode scripts/install.cjs --scope workspace           # ZCode (macOS)
+ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy                        # WorkBuddy (Windows; --agent because a plain shell has no WorkBuddy env)
+ELECTRON_RUN_AS_NODE=1 /Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy scripts/install.cjs --agent workbuddy  # WorkBuddy (macOS)
 ```
 
-Discovery order: `node` on `PATH`, `$AUTOCOMMIT_NODE`, the agent's bundled
-runtime (`$ZCODE_NODE_FALLBACK_EXEC_PATH` / `$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`),
-the app install locations
-(`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy,CodeBuddy}` on Windows; the
-`/Applications/*.app` bundles on macOS, `~/Applications` probed too, with the
-executable read from Info.plist's `CFBundleExecutable` — it may differ from the
-bundle name), then standalone Node installs (scoop, `Program Files\nodejs`,
-Homebrew, `/usr/local/bin`). Electron binaries are launched with
-`ELECTRON_RUN_AS_NODE=1` automatically; `.cmd`/`.bat` shims are skipped because
-bash cannot exec them directly. `AUTOCOMMIT_NODE=<path>` forces a specific
-runtime.
-
-`node scripts/<name>.cjs ...` still works wherever Node is installed; the other
-examples in this file use that form for brevity.
+The agents' bundled Node runtimes (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
+`$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`) are accepted too and tried first by the
+hook scripts; without those env vars the executables are probed under
+`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy}\` (Windows) or the
+`/Applications/*.app` bundles (macOS, `~/Applications` probed as well).
 
 ## Update the installed skill
 
@@ -400,8 +391,7 @@ them (the `backups/` directory is kept).
   `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic message** (`chore: update N files`): the helper did not run, or no model
-  provider is configured. Check the runtime with `bash scripts/run.sh --print`
-  (`AUTOCOMMIT_NODE` overrides it) and the provider config
+  provider is configured. Check the Node/Electron runtime and the provider config
   (`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`, default `~/.zcode/v2/provider_config.json`):
   the first rule with a `baseUrl` and an `access.apiKey` wins (`providerId` is
   user-set and never used for selection); its `api.type` decides request style and
@@ -479,9 +469,8 @@ Steps:
    final reply some other way, extend the field fallback there.
 6. Update the config table and hook JSON example in this file, the
    `--agent` help lines in the three scripts, and the runtime candidate
-   lists in `hooks/auto-commit.sh` and `scripts/run.sh` — keep those two in
-   sync — if the agent bundles a Node/Electron runtime worth probing
-   (Claude Code has none — PATH node suffices).
+   lists in `auto-commit.sh` if the agent bundles a Node/Electron runtime
+   worth probing (Claude Code has none — PATH node suffices).
 
 ## Files
 
