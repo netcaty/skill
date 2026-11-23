@@ -18,10 +18,12 @@
 # (agent auto-detected from the session environment, user scope by default;
 # see auto-commit-hook/SKILL.md for --agent/--scope/--config options)
 #
-# On machines with Claude Code (~/.claude exists or `claude` is on PATH) the
-# staged skill is also exposed at ~/.claude/skills/auto-commit-hook, because
-# Claude Code only scans ~/.claude/skills (ZCode/WorkBuddy read ~/.agents/skills
-# directly). Set AUTOCOMMIT_NO_SKILL_LINK=1 to skip that.
+# On machines with Claude Code (~/.claude exists or `claude` is on PATH) or
+# WorkBuddy (~/.workbuddy exists or `workbuddy` is on PATH) the staged skill is
+# also exposed at ~/.claude/skills/auto-commit-hook and/or
+# ~/.workbuddy/skills/auto-commit-hook, because those hosts only scan their own
+# skills dirs (ZCode reads ~/.agents/skills directly). Set
+# AUTOCOMMIT_NO_SKILL_LINK=1 to skip that.
 #
 # Env overrides (mainly for testing):
 #   AUTOCOMMIT_INSTALL_RAW    base URL files are fetched from (download mode)
@@ -100,42 +102,39 @@ else
     "$REPO" "$installed_at" > "$SKILL_DIR/.source.json"
 fi
 
-# --- Claude Code skill discoverability ---------------------------------------
-# ZCode and WorkBuddy read ~/.agents/skills directly, but Claude Code only scans
-# ~/.claude/skills. Expose the staged copy there when Claude Code is present: a
-# directory junction on Windows (no admin required), a symlink on macOS/Linux,
-# and a plain copy as the last resort. The link points at the staged skill dir,
-# so re-running this script refreshes the contents automatically.
-ensure_claude_skill_link() {
-  if [ -n "${AUTOCOMMIT_NO_SKILL_LINK:-}" ]; then
-    return 0
-  fi
-
-  local claude_home="$HOME/.claude"
-  local link="$claude_home/skills/auto-commit-hook"
+# --- Agent skill discoverability ---------------------------------------------
+# ZCode reads ~/.agents/skills directly, but Claude Code only scans
+# ~/.claude/skills and WorkBuddy only scans ~/.workbuddy/skills. Expose the
+# staged copy in each agent home that is present: a directory junction on
+# Windows (no admin required), a symlink on macOS/Linux, and a plain copy as the
+# last resort. Links point at the staged skill dir, so re-running this script
+# refreshes the contents automatically.
+ensure_agent_skill_link() {
+  local agent_home=$1 agent_label=$2 agent_cli=$3
+  local link="$agent_home/skills/auto-commit-hook"
   local target
   target=$(cd "$SKILL_DIR" 2>/dev/null && pwd -P) || return 0
 
-  # A custom install dir already inside Claude's skills tree needs no link.
+  # A custom install dir already inside this agent's skills tree needs no link.
   case "$target" in
-    */.claude/skills/*) return 0 ;;
+    "$agent_home"/skills/*) return 0 ;;
   esac
 
-  if [ ! -d "$claude_home" ] && ! command -v claude >/dev/null 2>&1; then
+  if [ ! -d "$agent_home" ] && ! command -v "$agent_cli" >/dev/null 2>&1; then
     return 0
   fi
 
   # Never replace an existing entry: it may be a real directory the user owns.
   if [ -e "$link" ] || [ -L "$link" ]; then
     if [ -f "$link/SKILL.md" ]; then
-      log "Claude Code skill already available: $link"
+      log "$agent_label skill already available: $link"
     else
       log "warning: $link exists but does not resolve to a skill; leaving it untouched"
     fi
     return 0
   fi
 
-  mkdir -p "$claude_home/skills" 2>/dev/null || true
+  mkdir -p "$agent_home/skills" 2>/dev/null || true
 
   local linked=0
   if command -v cygpath >/dev/null 2>&1 && command -v cmd >/dev/null 2>&1; then
@@ -154,13 +153,16 @@ ensure_claude_skill_link() {
   fi
 
   if [ "$linked" -eq 1 ] && [ -f "$link/SKILL.md" ]; then
-    log "Claude Code skill: $link"
+    log "$agent_label skill: $link"
   else
-    log "warning: could not expose the skill to Claude Code at $link"
+    log "warning: could not expose the skill to $agent_label at $link"
   fi
 }
 
-ensure_claude_skill_link
+if [ -z "${AUTOCOMMIT_NO_SKILL_LINK:-}" ]; then
+  ensure_agent_skill_link "$HOME/.claude" "Claude Code" claude
+  ensure_agent_skill_link "$HOME/.workbuddy" "WorkBuddy" workbuddy
+fi
 
 log "skill directory: $SKILL_DIR"
 log "Hook not registered. To enable auto-commit later, run:"

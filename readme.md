@@ -4,7 +4,7 @@ ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回
 
 ## 安装 skill
 
-三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 检测到 Claude Code（`~/.claude` 存在或 `claude` 在 PATH）时，会额外把该目录链接到 `~/.claude/skills/auto-commit-hook`（Windows 用 junction，失败退回复制；`AUTOCOMMIT_NO_SKILL_LINK=1` 可跳过），否则 Claude Code 扫不到 skill。 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/禁用/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
+三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 检测到 Claude Code 或 WorkBuddy（对应 home 目录存在，或 `claude` / `workbuddy` 在 PATH）时，会额外把该目录链接到 `~/.claude/skills/auto-commit-hook` 和/或 `~/.workbuddy/skills/auto-commit-hook`（Windows 用 junction，失败退回复制；`AUTOCOMMIT_NO_SKILL_LINK=1` 可跳过），否则这两个宿主扫不到 skill。 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/禁用/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
 
 ### 方式一：curl（无需 git）
 

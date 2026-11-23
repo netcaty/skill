@@ -29,11 +29,14 @@ curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bas
 
 The script only stages this skill directory to `~/.agents/skills/auto-commit-hook/`
 — it does not register any hook. On machines with Claude Code (`~/.claude`
-exists or `claude` is on `PATH`) it also exposes the staged copy at
-`~/.claude/skills/auto-commit-hook/` — a directory junction on Windows, a
+exists or `claude` is on `PATH`) or WorkBuddy (`~/.workbuddy` exists or
+`workbuddy` is on `PATH`) it also exposes the staged copy at
+`~/.claude/skills/auto-commit-hook/` and/or
+`~/.workbuddy/skills/auto-commit-hook/` — a directory junction on Windows, a
 symlink on macOS/Linux, falling back to a copy. Claude Code only scans
-`~/.claude/skills`; ZCode/WorkBuddy read `~/.agents/skills` directly. Set
-`AUTOCOMMIT_NO_SKILL_LINK=1` to skip this. To enable auto-commit afterwards:
+`~/.claude/skills` and WorkBuddy only scans `~/.workbuddy/skills`; ZCode reads
+`~/.agents/skills` directly. Set `AUTOCOMMIT_NO_SKILL_LINK=1` to skip this.
+To enable auto-commit afterwards:
 
 ```bash
 node ~/.agents/skills/auto-commit-hook/scripts/install.cjs
@@ -109,9 +112,9 @@ hook scripts; without those env vars the executables are probed under
 ## Update the installed skill
 
 The installed copies live in two places that go stale independently:
-`~/.agents/skills/auto-commit-hook/` (staged by `install.sh`; the Claude Code
-`~/.claude/skills/auto-commit-hook` link follows it) and the hook assets
-`~/.claude/hooks/auto-commit/`, `~/.workbuddy/hooks/auto-commit/` or
+`~/.agents/skills/auto-commit-hook/` (staged by `install.sh`; the
+`~/.claude/skills` and `~/.workbuddy/skills` links follow it) and the hook
+assets `~/.claude/hooks/auto-commit/`, `~/.workbuddy/hooks/auto-commit/` or
 `~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status.cjs` hashes
 the installed files and reports drift in its `update` section (`--json` adds
 an `update` object to every result):
@@ -133,8 +136,9 @@ config is untouched):
 
 1. Refresh the skill directory: run `install.sh` from the checkout
    (`bash install.sh` — local mode), or, without a checkout, re-run the
-   curl one-liner above (download mode). This also refreshes the Claude Code
-   `~/.claude/skills` link, which points at the staged copy.
+   curl one-liner above (download mode). This also refreshes the agent skill
+   links (`~/.claude/skills`, `~/.workbuddy/skills`), which point at the staged
+   copy.
 2. Refresh the hook assets: `node scripts/install.cjs`.
 3. Re-run `node scripts/status.cjs` and expect `up to date` on both lines.
 
