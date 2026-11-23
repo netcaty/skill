@@ -28,7 +28,12 @@ curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bas
 ```
 
 The script only stages this skill directory to `~/.agents/skills/auto-commit-hook/`
-— it does not register any hook. To enable auto-commit afterwards:
+— it does not register any hook. On machines with Claude Code (`~/.claude`
+exists or `claude` is on `PATH`) it also exposes the staged copy at
+`~/.claude/skills/auto-commit-hook/` — a directory junction on Windows, a
+symlink on macOS/Linux, falling back to a copy. Claude Code only scans
+`~/.claude/skills`; ZCode/WorkBuddy read `~/.agents/skills` directly. Set
+`AUTOCOMMIT_NO_SKILL_LINK=1` to skip this. To enable auto-commit afterwards:
 
 ```bash
 node ~/.agents/skills/auto-commit-hook/scripts/install.cjs
@@ -44,6 +49,13 @@ Run these from this skill directory. Every command accepts `--scope user`
 auto-detected from the session environment the same way the hook scripts do it,
 so `--agent` is only needed to override detection (e.g. installing for
 WorkBuddy from a ZCode session).
+
+Workspace scope resolves the project from the session environment
+(`CLAUDE_PROJECT_DIR`, `ZCODE_PROJECT_DIR`, `CODEBUDDY_PROJECT_DIR`) and falls
+back to the current directory, so run workspace-scope commands from the target
+repo. Running them from the skill directory treats that directory as the
+project: `status.cjs` then reports `not a git repository`, and any
+`safe.directory` hint it prints does not apply.
 
 ```bash
 # Install for every workspace (default scope)
@@ -97,10 +109,12 @@ hook scripts; without those env vars the executables are probed under
 ## Update the installed skill
 
 The installed copies live in two places that go stale independently:
-`~/.agents/skills/auto-commit-hook/` (staged by `install.sh`) and the hook
-assets `~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status.cjs`
-hashes the 8 installed files and reports drift in its `update` section
-(`--json` adds an `update` object to every result):
+`~/.agents/skills/auto-commit-hook/` (staged by `install.sh`; the Claude Code
+`~/.claude/skills/auto-commit-hook` link follows it) and the hook assets
+`~/.claude/hooks/auto-commit/`, `~/.workbuddy/hooks/auto-commit/` or
+`~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status.cjs` hashes
+the installed files and reports drift in its `update` section (`--json` adds
+an `update` object to every result):
 
 ```bash
 node scripts/status.cjs
@@ -119,7 +133,8 @@ config is untouched):
 
 1. Refresh the skill directory: run `install.sh` from the checkout
    (`bash install.sh` — local mode), or, without a checkout, re-run the
-   curl one-liner above (download mode).
+   curl one-liner above (download mode). This also refreshes the Claude Code
+   `~/.claude/skills` link, which points at the staged copy.
 2. Refresh the hook assets: `node scripts/install.cjs`.
 3. Re-run `node scripts/status.cjs` and expect `up to date` on both lines.
 
@@ -178,7 +193,8 @@ removes it. When the user types them:
    `settings.local.json`; the installer writes the personal local file because
    the command embeds this machine's bash path. Pass
    `--config .claude/settings.json` only if the hook is meant to be committed
-   for the whole team.
+   for the whole team: every teammate (and every other OS) then needs their own
+   registration, because that absolute bash path does not exist elsewhere.
 3. Registers the hook in the agent's own format. ZCode gets `hooks.enabled: true`
    (required for configuration-file hooks; this also enables any other
    configuration hooks in that file — the installer warns):
@@ -250,7 +266,8 @@ removes it. When the user types them:
    `--force`; two installs would commit twice per turn. For workbuddy bash
    resolution prefers the bundled `CODEBUDDY_CODE_GIT_BASH_PATH`; for claude it
    prefers `CLAUDE_CODE_GIT_BASH_PATH` (or `SHELL` when it points at bash).
-   Both then fall back to the usual Git installs.
+   Both then fall back to the usual Git installs. To pin a specific bash for
+   Claude Code, set `CLAUDE_CODE_GIT_BASH_PATH` in the settings `env`.
 
 ## Verify
 
@@ -258,9 +275,12 @@ removes it. When the user types them:
 node scripts/status.cjs --scope workspace
 ```
 
-Expect `installed`, `enabled: true`, scripts present, `git: ok`, and after a
-turn `last run: ok ...`. A `last run: FAILED ...` line names the failing stage
-and the log path (see "Failure visibility").
+Expect `installed` and `scripts: present`, and after a turn `last run: ok ...`.
+`enabled: true` appears for ZCode only (command-string agents report
+`enabled: (n/a for command hooks)`), and `git: ok` only when the command runs
+inside a git repository (see the workspace-scope note above). A
+`last run: FAILED ...` line names the failing stage and the log path (see
+"Failure visibility").
 
 - New sessions pick up the hook. Start a new session or reopen the workspace after
   installing.
@@ -334,6 +354,12 @@ them (the `backups/` directory is kept).
 - It uses `--no-verify` and disables GPG signing for that commit.
 - It commits on the current branch and skips merge/rebase/conflict/detached-HEAD
   states.
+- Concurrent Stop events in the same repository serialize on
+  `<git-dir>/auto-commit.lock`; a stale lock left by a killed hook is reclaimed
+  on the next turn.
+- Claude Code re-enters `Stop` when another Stop hook blocks the turn; events
+  with `stop_hook_active: true` are skipped so checkpoints cover completed
+  turns only.
 - Workspace config lives under `.zcode/`. If that directory is not ignored, the
   auto-commit hook will commit the config file itself.
 - Claude Code merges hooks from user settings, project `settings.json` and

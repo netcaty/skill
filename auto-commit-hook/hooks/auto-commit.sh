@@ -165,6 +165,13 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 hook_input=""
 [ -t 0 ] || hook_input=$(cat 2>/dev/null)
 
+# Claude Code re-enters Stop after another Stop hook blocked the turn. That
+# intermediate event would checkpoint work that is still in flight, so skip it
+# (the field is absent on ZCode/WorkBuddy payloads).
+if [ -n "$hook_input" ] && printf '%s' "$hook_input" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true'; then
+  exit 0
+fi
+
 # Never interfere with an in-progress merge/rebase/am or unresolved conflicts.
 gitdir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
 [ -e "$gitdir/MERGE_HEAD" ] && exit 0
@@ -178,6 +185,22 @@ git symbolic-ref -q HEAD >/dev/null 2>&1 || exit 0
 if git diff --quiet HEAD 2>/dev/null && [ -z "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
   exit 0
 fi
+
+# --- serialize concurrent Stops ---------------------------------------------
+# Two sessions in the same repository (or a second Stop while the first is
+# still committing) must not race on the index. mkdir is atomic; the pid lets a
+# later run reclaim a lock left by a hook that was killed, e.g. by its timeout.
+lockdir="$gitdir/auto-commit.lock"
+if ! mkdir "$lockdir" 2>/dev/null; then
+  lockpid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  if [ -n "$lockpid" ] && kill -0 "$lockpid" 2>/dev/null; then
+    exit 0
+  fi
+  rm -rf "$lockdir" 2>/dev/null || exit 0
+  mkdir "$lockdir" 2>/dev/null || exit 0
+fi
+printf '%s\n' "$$" > "$lockdir/pid" 2>/dev/null || true
+trap 'rm -rf "$lockdir"' EXIT
 
 add_output=$(git add -A 2>&1)
 add_status=$?

@@ -18,6 +18,11 @@
 # (agent auto-detected from the session environment, user scope by default;
 # see auto-commit-hook/SKILL.md for --agent/--scope/--config options)
 #
+# On machines with Claude Code (~/.claude exists or `claude` is on PATH) the
+# staged skill is also exposed at ~/.claude/skills/auto-commit-hook, because
+# Claude Code only scans ~/.claude/skills (ZCode/WorkBuddy read ~/.agents/skills
+# directly). Set AUTOCOMMIT_NO_SKILL_LINK=1 to skip that.
+#
 # Env overrides (mainly for testing):
 #   AUTOCOMMIT_INSTALL_RAW    base URL files are fetched from (download mode)
 #   AUTOCOMMIT_INSTALL_DIR    where the skill directory is staged
@@ -94,6 +99,68 @@ else
   printf '{\n  "source": "https://github.com/%s",\n  "mode": "download",\n  "installedAt": "%s"\n}\n' \
     "$REPO" "$installed_at" > "$SKILL_DIR/.source.json"
 fi
+
+# --- Claude Code skill discoverability ---------------------------------------
+# ZCode and WorkBuddy read ~/.agents/skills directly, but Claude Code only scans
+# ~/.claude/skills. Expose the staged copy there when Claude Code is present: a
+# directory junction on Windows (no admin required), a symlink on macOS/Linux,
+# and a plain copy as the last resort. The link points at the staged skill dir,
+# so re-running this script refreshes the contents automatically.
+ensure_claude_skill_link() {
+  if [ -n "${AUTOCOMMIT_NO_SKILL_LINK:-}" ]; then
+    return 0
+  fi
+
+  local claude_home="$HOME/.claude"
+  local link="$claude_home/skills/auto-commit-hook"
+  local target
+  target=$(cd "$SKILL_DIR" 2>/dev/null && pwd -P) || return 0
+
+  # A custom install dir already inside Claude's skills tree needs no link.
+  case "$target" in
+    */.claude/skills/*) return 0 ;;
+  esac
+
+  if [ ! -d "$claude_home" ] && ! command -v claude >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Never replace an existing entry: it may be a real directory the user owns.
+  if [ -e "$link" ] || [ -L "$link" ]; then
+    if [ -f "$link/SKILL.md" ]; then
+      log "Claude Code skill already available: $link"
+    else
+      log "warning: $link exists but does not resolve to a skill; leaving it untouched"
+    fi
+    return 0
+  fi
+
+  mkdir -p "$claude_home/skills" 2>/dev/null || true
+
+  local linked=0
+  if command -v cygpath >/dev/null 2>&1 && command -v cmd >/dev/null 2>&1; then
+    cmd //c mklink //J "$(cygpath -w "$link")" "$(cygpath -w "$target")" >/dev/null 2>&1 && linked=1
+  fi
+  if [ "$linked" -eq 0 ]; then
+    ln -s "$target" "$link" 2>/dev/null && linked=1
+  fi
+  if [ "$linked" -eq 0 ]; then
+    if mkdir -p "$link" 2>/dev/null && cp -R "$target/." "$link/" 2>/dev/null; then
+      linked=1
+      log "copied skill to $link (re-run this script after updates)"
+    else
+      rmdir "$link" 2>/dev/null || true
+    fi
+  fi
+
+  if [ "$linked" -eq 1 ] && [ -f "$link/SKILL.md" ]; then
+    log "Claude Code skill: $link"
+  else
+    log "warning: could not expose the skill to Claude Code at $link"
+  fi
+}
+
+ensure_claude_skill_link
 
 log "skill directory: $SKILL_DIR"
 log "Hook not registered. To enable auto-commit later, run:"
