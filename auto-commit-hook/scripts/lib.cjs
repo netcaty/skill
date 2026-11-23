@@ -679,7 +679,8 @@ const UPDATABLE_FILES = [
   "scripts/install.cjs",
   "scripts/uninstall.cjs",
   "scripts/status.cjs",
-  "scripts/setup-llm.cjs"
+  "scripts/setup-llm.cjs",
+  "scripts/run.sh"
 ];
 
 // Where install.sh stages the skill directory (same default and env override

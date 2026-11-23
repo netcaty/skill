@@ -39,7 +39,7 @@ symlink on macOS/Linux, falling back to a copy. Claude Code only scans
 To enable auto-commit afterwards:
 
 ```bash
-node ~/.agents/skills/auto-commit-hook/scripts/install.cjs
+bash ~/.agents/skills/auto-commit-hook/scripts/run.sh install
 ```
 
 (agent auto-detected from the session environment, user scope by default).
@@ -60,54 +60,52 @@ repo. Running them from the skill directory treats that directory as the
 project: `status.cjs` then reports `not a git repository`, and any
 `safe.directory` hint it prints does not apply.
 
+`scripts/run.sh` is the entry point: `run.sh <command>` runs
+`scripts/<command>.cjs`, so the scripts are its subcommands (`install`,
+`uninstall`, `status`, `setup-llm`). The runner finds a Node runtime itself, so
+`node` does not have to be on `PATH`: node on `PATH`, `$AUTOCOMMIT_NODE`, the
+agent's bundled runtime (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
+`$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`), the app install locations
+(`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy,CodeBuddy}` on Windows;
+`/Applications/*.app` on macOS, `~/Applications` probed too, with the executable
+read from Info.plist's `CFBundleExecutable` — it may differ from the bundle
+name), then standalone Node installs (scoop, `Program Files\nodejs`, Homebrew,
+`/usr/local/bin`). Electron binaries are started with `ELECTRON_RUN_AS_NODE=1`
+automatically; `.cmd`/`.bat` shims are skipped because bash cannot exec them
+directly. `bash scripts/run.sh --print` shows the runtime without running a
+command, and `node scripts/<command>.cjs ...` stays equivalent wherever Node is
+on `PATH`.
+
 ```bash
 # Install for every workspace (default scope)
-node scripts/install.cjs
+bash scripts/run.sh install
 
 # Install for the current project only
-node scripts/install.cjs --scope workspace
+bash scripts/run.sh install --scope workspace
 
 # Install for WorkBuddy (agent auto-detected, or force it with --agent)
-node scripts/install.cjs --agent workbuddy
+bash scripts/run.sh install --agent workbuddy
 
 # Preview without writing
-node scripts/install.cjs --dry-run
+bash scripts/run.sh install --dry-run
 
 # Inspect
-node scripts/status.cjs
-node scripts/status.cjs --agent workbuddy --all --json
+bash scripts/run.sh status
+bash scripts/run.sh status --agent workbuddy --all --json
 
 # Uninstall (keep the copied scripts)
-node scripts/uninstall.cjs
+bash scripts/run.sh uninstall
 
 # Uninstall and remove copied scripts when nothing else references them
-node scripts/uninstall.cjs --agent workbuddy --scope workspace --purge
+bash scripts/run.sh uninstall --agent workbuddy --scope workspace --purge
 
 # Manual LLM endpoint for commit messages (stored in
 # ~/.agents/skills/auto-commit-hook/llm-config.json; wins over the session
 # provider, AUTOCOMMIT_LLM_* env overrides win over it)
-node scripts/setup-llm.cjs --url https://example.com/v1/messages --key sk-... --model glm-5.3-flash,auto/glm-5.3-flash
-node scripts/setup-llm.cjs --show
-node scripts/setup-llm.cjs --clear
+bash scripts/run.sh setup-llm --url https://example.com/v1/messages --key sk-... --model glm-5.3-flash,auto/glm-5.3-flash
+bash scripts/run.sh setup-llm --show
+bash scripts/run.sh setup-llm --clear
 ```
-
-If `node` is not on `PATH`, run the same script with the agent's Electron runtime
-(`ELECTRON_RUN_AS_NODE=1 "<app exe>" scripts/install.cjs ...`; on macOS the
-executable under `Contents/MacOS/` follows Info.plist's `CFBundleExecutable` and
-may differ from the bundle name):
-
-```bash
-ELECTRON_RUN_AS_NODE=1 "$ZCODE_WINDOWS_APP_INSTALL_DIR/ZCode.exe" scripts/install.cjs --scope workspace             # ZCode (Windows)
-ELECTRON_RUN_AS_NODE=1 /Applications/ZCode.app/Contents/MacOS/ZCode scripts/install.cjs --scope workspace           # ZCode (macOS)
-ELECTRON_RUN_AS_NODE=1 "$WB_SHT_INSTDIR/WorkBuddy.exe" scripts/install.cjs --agent workbuddy                        # WorkBuddy (Windows; --agent because a plain shell has no WorkBuddy env)
-ELECTRON_RUN_AS_NODE=1 /Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy scripts/install.cjs --agent workbuddy  # WorkBuddy (macOS)
-```
-
-The agents' bundled Node runtimes (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
-`$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`) are accepted too and tried first by the
-hook scripts; without those env vars the executables are probed under
-`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy}\` (Windows) or the
-`/Applications/*.app` bundles (macOS, `~/Applications` probed as well).
 
 ## Update the installed skill
 
@@ -120,8 +118,8 @@ the installed files and reports drift in its `update` section (`--json` adds
 an `update` object to every result):
 
 ```bash
-node scripts/status.cjs
-node scripts/status.cjs --source /path/to/skill-checkout   # when no .source.json
+bash scripts/run.sh status
+bash scripts/run.sh status --source /path/to/skill-checkout   # when no .source.json
 ```
 
 The source checkout is remembered in
@@ -139,39 +137,39 @@ config is untouched):
    curl one-liner above (download mode). This also refreshes the agent skill
    links (`~/.claude/skills`, `~/.workbuddy/skills`), which point at the staged
    copy.
-2. Refresh the hook assets: `node scripts/install.cjs`.
-3. Re-run `node scripts/status.cjs` and expect `up to date` on both lines.
+2. Refresh the hook assets: `bash scripts/run.sh install`.
+3. Re-run `bash scripts/run.sh status` and expect `up to date` on both lines.
 
 Hook assets take effect on the next Stop event (the hook re-reads its scripts
 every turn); updated `SKILL.md` and `scripts/` apply to new sessions.
 
 ## Dialog follow-ups
 
-After installing, tell the user the dialog prompts — not raw node commands:
+After installing, tell the user the dialog prompts — not raw script commands:
 `项目级别启用 hook` applies the hook to the current project only; `禁用 hook`
 removes it. When the user types them:
 
 - `项目级别启用 hook`: nothing installed yet → run
-  `node scripts/install.cjs --scope workspace`. If user scope is installed,
+  `bash scripts/run.sh install --scope workspace`. If user scope is installed,
   uninstall it first and then install workspace scope — install.cjs refuses
   both scopes at once, and running them together commits twice per turn. If
   workspace scope is already installed, just say so.
-- `禁用 hook`: run `node scripts/status.cjs` first, then uninstall every
-  installed scope (`node scripts/uninstall.cjs`, plus `--scope workspace`
+- `禁用 hook`: run `bash scripts/run.sh status` first, then uninstall every
+  installed scope (`bash scripts/run.sh uninstall`, plus `--scope workspace`
   where needed). Keep the copied scripts unless the user asks for `--purge`.
-- `更新 hook` (or `更新 skill`): run `node scripts/status.cjs` first — its
+- `更新 hook` (or `更新 skill`): run `bash scripts/run.sh status` first — its
   `update` section names the stale files. Then refresh the skill directory
   (checkout: `bash install.sh` there; no checkout: re-run the curl one-liner),
-  run `node scripts/install.cjs`, and re-run `status.cjs` to verify. Say that
+  run `bash scripts/run.sh install`, and re-run `status` to verify. Say that
   hook assets apply immediately while SKILL.md changes need a new session.
-- `查看 hook 状态`: run `node scripts/status.cjs --all` (add `--json` when the
+- `查看 hook 状态`: run `bash scripts/run.sh status --all` (add `--json` when the
   result is parsed programmatically). Report installed/enabled per scope and
   the `update` section — outdated files mean an update is available (see
   `更新 hook` above). A `last run: ok` line is healthy; `last run: FAILED
   <time> (<stage>)` names the failing step and the log path under the install
   directory, so quote it back to the user and suggest the fix.
 - `设置 LLM 配置[: url=... key=... model=...]`: run
-  `node scripts/setup-llm.cjs --url <url> --key <key> [--model <id[,id...]>]`;
+  `bash scripts/run.sh setup-llm --url <url> --key <key> [--model <id[,id...]>]`;
   ask for any missing values first. After saving, confirm with `--show`
   (key masked) and never echo the key in plain text. `查看 LLM 配置` runs
   `--show`, `清除 LLM 配置` runs `--clear`. The saved config outranks the
@@ -276,7 +274,7 @@ removes it. When the user types them:
 ## Verify
 
 ```bash
-node scripts/status.cjs --scope workspace
+bash scripts/run.sh status --scope workspace
 ```
 
 Expect `installed` and `scripts: present`, and after a turn `last run: ok ...`.
@@ -469,8 +467,9 @@ Steps:
    final reply some other way, extend the field fallback there.
 6. Update the config table and hook JSON example in this file, the
    `--agent` help lines in the three scripts, and the runtime candidate
-   lists in `auto-commit.sh` if the agent bundles a Node/Electron runtime
-   worth probing (Claude Code has none — PATH node suffices).
+   lists in `hooks/auto-commit.sh` and `scripts/run.sh` — keep those two in
+   sync — if the agent bundles a Node/Electron runtime worth probing
+   (Claude Code has none — PATH node suffices).
 
 ## Files
 

@@ -14,7 +14,7 @@
 #      ./skill/install.sh
 #
 # To enable auto-commit afterwards (this script does not do it):
-#   node ~/.agents/skills/auto-commit-hook/scripts/install.cjs
+#   bash ~/.agents/skills/auto-commit-hook/scripts/run.sh install
 # (agent auto-detected from the session environment, user scope by default;
 # see auto-commit-hook/SKILL.md for --agent/--scope/--config options)
 #
@@ -76,7 +76,7 @@ else
     || fail "curl not found; install curl or use the git clone method."
   BASE="$RAW/auto-commit-hook"
   log "fetching skill files from $BASE"
-  FILES="SKILL.md hooks/auto-commit.sh hooks/auto-commit-msg.cjs scripts/lib.cjs scripts/install.cjs scripts/uninstall.cjs scripts/status.cjs scripts/setup-llm.cjs"
+  FILES="SKILL.md hooks/auto-commit.sh hooks/auto-commit-msg.cjs scripts/lib.cjs scripts/install.cjs scripts/uninstall.cjs scripts/status.cjs scripts/setup-llm.cjs scripts/run.sh"
   for f in $FILES; do
     mkdir -p "$SKILL_DIR/$(dirname "$f")"
     curl -fsSL "$BASE/$f" -o "$SKILL_DIR/$f" || fail "download failed: $BASE/$f"
@@ -166,6 +166,6 @@ fi
 
 log "skill directory: $SKILL_DIR"
 log "Hook not registered. To enable auto-commit later, run:"
-log "  node \"$SKILL_DIR/scripts/install.cjs\""
+log "  bash \"$SKILL_DIR/scripts/run.sh\" install"
 log "  or type '安装 hook' in the agent's dialog box."
 log "To update later, re-run this script (or type '更新 hook' in the agent's dialog box)."
