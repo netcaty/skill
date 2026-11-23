@@ -142,7 +142,8 @@ config is untouched):
 3. Re-run `bash scripts/run.sh status` and expect `up to date` on both lines.
 
 Hook assets take effect on the next Stop event (the hook re-reads its scripts
-every turn); updated `SKILL.md` and `scripts/` apply to new sessions.
+every turn); updated `SKILL.md`, `references/` and `scripts/` apply to new
+sessions.
 
 ## Dialog follow-ups
 
@@ -176,102 +177,6 @@ removes it. When the user types them:
   `--show`, `清除 LLM 配置` runs `--clear`. The saved config outranks the
   session provider — say so when saving.
 
-## What install does
-
-1. Copies `hooks/auto-commit.sh` and `hooks/auto-commit-msg.cjs` to the agent's
-   asset directory: `~/.zcode/hooks/auto-commit/` (zcode),
-   `~/.workbuddy/hooks/auto-commit/` (workbuddy) or
-   `~/.claude/hooks/auto-commit/` (claude).
-2. Merges a `Stop` entry into the selected config:
-
-   | agent | workspace | user |
-   |---|---|---|
-   | zcode | `<repo>/.zcode/config.json` | `~/.zcode/cli/config.json` |
-   | workbuddy | `<repo>/.workbuddy/settings.json` | `~/.workbuddy/settings.json` |
-   | claude | `<repo>/.claude/settings.local.json` | `~/.claude/settings.json` |
-
-   WorkBuddy's user-scope file name follows the verified project-level layout;
-   confirm it once with `status.cjs` on a real machine. Claude Code merges user
-   settings, project `settings.json` (team-shared) and project
-   `settings.local.json`; the installer writes the personal local file because
-   the command embeds this machine's bash path. Pass
-   `--config .claude/settings.json` only if the hook is meant to be committed
-   for the whole team: every teammate (and every other OS) then needs their own
-   registration, because that absolute bash path does not exist elsewhere.
-3. Registers the hook in the agent's own format. ZCode gets `hooks.enabled: true`
-   (required for configuration-file hooks; this also enables any other
-   configuration hooks in that file — the installer warns):
-
-```json
-{
-  "hooks": [{
-    "type": "process",
-    "command": "<bash executable>",
-    "args": ["<posix path>/auto-commit.sh"],
-    "timeoutMs": 30000,
-    "statusMessage": "Running Auto-commit Hook"
-  }]
-}
-```
-
-   WorkBuddy gets a `command` hook with a quoted forward-slash command string and
-   a whole-second timeout, matching the verified `hooks.Stop[]` layout (no
-   `events` wrapper, no `enabled` flag):
-
-```json
-{
-  "hooks": [{
-    "type": "command",
-    "command": "\"<bash>\" \"<script>/auto-commit.sh\"",
-    "timeout": 30
-  }]
-}
-```
-
-   Claude Code uses the same command-string family; `matcher` is optional and
-   omitted for Stop (the verified settings file has none), `timeout` is whole
-   seconds, `statusMessage` is supported, and there is no `enabled` flag:
-
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "\"<bash>\" \"<script>/auto-commit.sh\"",
-        "timeout": 30,
-        "statusMessage": "Running Auto-commit Hook"
-      }]
-    }]
-  }
-}
-```
-
-   Claude Code Stop payloads carry the final reply in `last_assistant_message`
-   (verified against Claude Code 2.1.x hook-env dumps). The helper reads that
-   field first and falls back to the JSONL transcript behind `transcript_path`
-   — taking the last main-chain assistant text entry — for hosts or versions
-   that omit it. Commit-message model sources: ZCode reads
-   `provider_config.json`, WorkBuddy uses its session loopback proxy, and
-   Claude Code uses the session's `ANTHROPIC_BASE_URL` +
-   `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`, with the model taken from
-   `ANTHROPIC_MODEL`, then `ANTHROPIC_SMALL_FAST_MODEL` /
-   `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`, then the ids listed in
-   `CLAUDE_CODE_MODEL_CAPABILITIES`; the saved `llm-config.json` and
-   `AUTOCOMMIT_LLM_*` overrides outrank all of them.
-
-4. Backs up an existing config under `<agent asset dir>/backups/` (never next
-   to the config — a workspace `.bak` would not be gitignored and `git add -A`
-   could commit it) and records the previous `hooks.enabled` value in the
-   agent's `install-state.json`.
-5. Refuses to install when another merged config already registers the hook
-   (the opposite scope, or either Claude project settings file) unless
-   `--force`; two installs would commit twice per turn. For workbuddy bash
-   resolution prefers the bundled `CODEBUDDY_CODE_GIT_BASH_PATH`; for claude it
-   prefers `CLAUDE_CODE_GIT_BASH_PATH` (or `SHELL` when it points at bash).
-   Both then fall back to the usual Git installs. To pin a specific bash for
-   Claude Code, set `CLAUDE_CODE_GIT_BASH_PATH` in the settings `env`.
-
 ## Verify
 
 ```bash
@@ -282,54 +187,12 @@ Expect `installed` and `scripts: present`, and after a turn `last run: ok ...`.
 `enabled: true` appears for ZCode only (command-string agents report
 `enabled: (n/a for command hooks)`), and `git: ok` only when the command runs
 inside a git repository (see the workspace-scope note above). A
-`last run: FAILED ...` line names the failing stage and the log path (see
-"Failure visibility").
+`last run: FAILED ...` line names the failing stage and the log path; see
+[troubleshooting](references/troubleshooting.md), which also shows how to run
+the installed hook by hand.
 
 - New sessions pick up the hook. Start a new session or reopen the workspace after
   installing.
-- To run the installed hook manually (no model call):
-
-```bash
-printf '%s' '{"last_assistant_message":"test"}' \
-  | ZCODE_PROJECT_DIR=/path/to/repo AUTOCOMMIT_NO_AI=1 \
-    "<bash>" "$HOME/.zcode/hooks/auto-commit/auto-commit.sh"
-git -C /path/to/repo log -1
-```
-
-  Claude Code variant — the real Stop payload carries both
-  `last_assistant_message` and `transcript_path`; the helper prefers the field
-  and falls back to the transcript's last assistant text entry:
-
-```bash
-printf '%s' '{"transcript_path":"/path/to/transcript.jsonl","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"test"}' \
-  | CLAUDE_PROJECT_DIR=/path/to/repo AUTOCOMMIT_NO_AI=1 \
-    "<bash>" "$HOME/.claude/hooks/auto-commit/auto-commit.sh"
-git -C /path/to/repo log -1
-```
-
-## Failure visibility
-
-The hook always exits 0 and never blocks a turn, so failures are reported out
-of band instead of aborting:
-
-- Every real failure (missing git, `git add`/`git commit` errors, a sensitive
-  file that could not be unstaged) overwrites `last-run.json` and appends to
-  `auto-commit.log` in the agent's asset directory. The log is created lazily
-  on the first failure; a successful commit only overwrites `last-run.json`
-  with `status: "ok"`, so a healthy install usually has no log file.
-- `status.cjs` prints that state: `last run: FAILED <time> (<stage>) <detail>`
-  plus the log path; `--json` exposes the same object as `lastRun`.
-- Claude Code additionally receives a non-blocking stdout payload
-  `{"systemMessage":"⚠ auto-commit failed (...)","suppressOutput":true}`, which
-  the UI shows immediately. Other hosts get no stdout by default (their hook
-  output schema is not verified); set `AUTOCOMMIT_NOTIFY_STDOUT=1` to force the
-  same JSON channel for testing.
-- Expected skips — not a repository, clean tree, merge/rebase in progress,
-  detached HEAD — are not failures and are never reported. A missing model
-  also falls back to the generic `chore: update N files` by design and is not
-  reported as a failure.
-- If a sensitive file cannot be unstaged, the hook aborts the commit, unstages
-  everything, and reports stage `sensitive gate` instead of risking a leak.
 
 ## Uninstall
 
@@ -341,143 +204,26 @@ them (the `backups/` directory is kept).
 
 ## Safety
 
-- The hook runs `git add -A` every turn: all tracked/untracked, non-ignored changes
-  are committed, including pre-existing user changes.
-- Sensitive files get a two-layer gate before the commit. Layer 1 (deterministic)
-  unstages obvious secret names — `.env*` (except `.env.example`-style), key/cert
-  extensions (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`),
-  `id_rsa`-style SSH keys, `credentials*`/`secrets*` data files, service-account
-  JSON, and `.npmrc`/`.pypirc`/`.netrc`. Layer 2 (best-effort) screens a clipped
-  staged diff with the same model call that writes the commit message and can
-  flag more paths. Every excluded path is listed in the commit body under
-  `⚠ excluded from this commit (sensitive)`. This is not a security boundary:
-  an unavailable model leaves only layer 1 (`AUTOCOMMIT_NO_AI=1` also disables
-  layer 2), and flagged paths are always matched against the real staged list,
-  so a hallucinated path can never unstage anything.
-- It uses `--no-verify` and disables GPG signing for that commit.
-- It commits on the current branch and skips merge/rebase/conflict/detached-HEAD
-  states.
-- Concurrent Stop events in the same repository serialize on
-  `<git-dir>/auto-commit.lock`; a stale lock left by a killed hook is reclaimed
-  on the next turn.
-- A host re-enters `Stop` after another Stop hook blocks the turn and marks
-  that payload `stop_hook_active: true`; such events are skipped so checkpoints
-  cover completed turns only. The check is field-driven and applies to every
-  agent that reports the field (Claude Code, WorkBuddy, ...); hosts that omit
-  it are unaffected.
-- Workspace config lives under `.zcode/`. If that directory is not ignored, the
-  auto-commit hook will commit the config file itself.
-- Claude Code merges hooks from user settings, project `settings.json` and
-  project `settings.local.json`; every registered copy runs. Register the hook
-  in one file only — `install.cjs` refuses another merged file that already has
-  it, so do not also add it by hand to `settings.json`.
-- Claude Code's `disableAllHooks` / `allowManagedHooksOnly` (in any merged
-  settings file) stop the hook from running; `install.cjs` and `status.cjs`
-  warn when they see them. Project-level hooks also require workspace trust.
-- On Claude Code, `Stop` also fires on user interrupt, `/clear` and after
-  compaction, so those end-of-turn events can produce a checkpoint commit too.
-- The default scope is `user`, which applies to every project; use
-  `--scope workspace` to limit the hook to a single repo.
-- Review `.gitignore` before enabling. The hook never commits ignored files.
+- The hook runs `git add -A` every turn: all tracked/untracked, non-ignored
+  changes are committed, including pre-existing user changes.
+- Sensitive files get a two-layer gate before the commit (obvious secret names
+  are unstaged by name; a model screens a clipped diff and can flag more), and
+  every exclusion is listed in the commit body. This is not a security
+  boundary.
+- It uses `--no-verify`, skips merge/rebase/conflict/detached-HEAD states,
+  serializes concurrent Stops on `<git-dir>/auto-commit.lock`, and skips
+  `stop_hook_active: true` re-entries.
 
-## Troubleshooting
+The full list — Claude Code's merged hook files, `disableAllHooks`, workspace
+trust, scope defaults and `.gitignore` caveats — is in
+[safety](references/safety.md).
 
-- **Nothing commits**: run `status.cjs`; a `last run: FAILED ...` line names the
-  failing stage and the log path. Confirm the hook is installed, the configured
-  bash exists, and `git rev-parse` works under the current user. On ZCode also
-  confirm `hooks.enabled: true`; on Claude Code check workspace trust and the
-  `disableAllHooks` / `allowManagedHooksOnly` warnings. If git reports
-  `dubious ownership`, run:
-  `git config --global --add safe.directory <repo>`
-- **Generic message** (`chore: update N files`): the helper did not run, or no model
-  provider is configured. Check the Node/Electron runtime and the provider config
-  (`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`, default `~/.zcode/v2/provider_config.json`):
-  the first rule with a `baseUrl` and an `access.apiKey` wins (`providerId` is
-  user-set and never used for selection); its `api.type` decides request style and
-  auth (`anthropic-messages` and `openai-chat-completions` both supported), and
-  models are tried in the rule's `modelOrder` order.
-- **Double commits**: installed in both scopes; uninstall one. On Claude Code
-  also check both project files (`settings.json` and `settings.local.json`) —
-  every merged copy runs; remove an old one with
-  `--config .claude/settings.json`.
-- **Config parse error**: the installer refuses to edit invalid JSON. Fix the file or
-  pass `--config <file>`.
-- **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
-  against a real `.workbuddy/settings.json`). Other agents: the hook scripts are
-  agent-agnostic — pass `--config <path>` if the target uses ZCode's
-  `hooks.events` schema, or extend `lib.cjs` with another branch (see
-  "Adding a new agent" below for the checklist).
-- **Claude Code**: pass `--agent claude` (workspace scope writes
-  `.claude/settings.local.json`; user scope writes `~/.claude/settings.json`).
-  The commit-message model comes from the session's `ANTHROPIC_BASE_URL` +
-  `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` and, in order, `ANTHROPIC_MODEL`,
-  `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`,
-  then the ids in `CLAUDE_CODE_MODEL_CAPABILITIES`; a saved `llm-config.json`
-  or `AUTOCOMMIT_LLM_*` outranks them. Without any model source commits still
-  happen but with generic heuristic messages. If nothing commits, check that
-  the project is trusted, no merged settings file sets `disableAllHooks` /
-  `allowManagedHooksOnly` (`status.cjs` warns), and the registered bash path
-  still exists.
-- **Mixed agents**: the hook scripts detect their host at runtime (env-var
-  prefixes), so the same install works under any supported host; `--agent` only
-  selects where the hook is registered and in which format.
+## Reference files
 
-## Adding a new agent (e.g. dsh)
-
-Support is plugin-shaped: `scripts/lib.cjs` holds the authoritative
-`AGENT_PROFILES` registry (one `defineAgent()` entry per agent), and
-`detectAgent()` / `installDir()` / `configPath()` / `ensureStopHook()` are
-thin dispatchers over it — after detection, everything goes through the
-profile. Confirm the facts below against the target agent (a real hook-env
-dump plus its installed config file are the ground truth — never guess),
-then add one profile. The `claude` profile is the worked example to copy.
-
-| profile field | meaning |
-|---|---|
-| `name` | the `--agent` value |
-| `priority` | detection order; brand-specific markers must win over shared ones (workbuddy 10 < zcode 20 < claude 30) |
-| `detect(env)` | predicate over the session's env markers |
-| `installDir(home)` | the agent's asset-copy directory |
-| `configPaths(project, home)` | `{ workspace, user }` hook config paths |
-| `hookSchema` | key into `HOOK_SCHEMA_WRITERS` (same file) |
-
-Steps:
-
-1. Add the `defineAgent()` entry to `AGENT_PROFILES` in `scripts/lib.cjs`;
-   `AGENTS` (the `--agent` validation list) derives from it automatically.
-2. Only for a genuinely new hook JSON layout: add a writer to
-   `HOOK_SCHEMA_WRITERS`. Covered families: `process-events` (zcode — nested
-   `hooks.events.<Event>[]`, process argv, `hooks.enabled`) and `command-flat`
-   (workbuddy — flat `hooks.<Event>[]`, quoted command string, whole-second
-   timeout); `command-flat-claude` is the claude variant (same layout, plus
-   `statusMessage`, without the optional `matcher`).
-   `eventArrays`/`isOurHook`/`stripOurHooks` iterate both known layouts, so
-   same-family agents need nothing there.
-3. Only for a genuinely new commit-message model source: add the loader to
-   `MODEL_SOURCES` in `hooks/auto-commit-msg.cjs` (the runtime mirror of
-   `AGENT_PROFILES`), plus an alias if the agent shares an existing source.
-   No source means the local-heuristic fallback still commits.
-4. Optionally add a marker row to the detection table in
-   `hooks/auto-commit.sh` (the bash mirror of the registry). Without it the
-   agent still works as `unknown` — the cd chain, runtime fallback and
-   model-source probe all handle that; the row only improves runtime
-   candidate ordering.
-5. Stop payload: `parsePayload()` is deliberately field-driven, not
-   agent-driven (`last_assistant_message` first, then `transcript_path` — a
-   wrong detection cannot lose the message). If the new agent exposes the
-   final reply some other way, extend the field fallback there.
-6. Update the config table and hook JSON example in this file, the
-   `--agent` help lines in the three scripts, and the runtime candidate
-   lists in `hooks/auto-commit.sh` and `scripts/run.sh` — keep those two in
-   sync — if the agent bundles a Node/Electron runtime worth probing
-   (Claude Code has none — PATH node suffices).
-
-## Files
-
-Everything under `hooks/` and `scripts/` is installed verbatim; see the
-commands above for what each script does.
-
-The hook always executes the asset copies in `~/.zcode/hooks/auto-commit/`
-(or `~/.workbuddy/...`, `~/.claude/...`) — never this directory — which is why
-refreshing takes both steps in "Update the installed skill" above, and why
-`install.sh` alone does not refresh the hook.
+- [install internals](references/install-internals.md) — what install writes,
+  config paths, hook JSON per agent, commit-message model sources
+- [troubleshooting](references/troubleshooting.md) — failure reporting, manual
+  hook runs, common problems
+- [safety](references/safety.md) — complete safety behaviour
+- [adding an agent](references/adding-an-agent.md) — support checklist for a new
+  host
