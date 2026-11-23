@@ -4,7 +4,7 @@ ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回
 
 ## 安装 skill
 
-三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 检测到 Claude Code 或 WorkBuddy（对应 home 目录存在，或 `claude` / `workbuddy` 在 PATH）时，会额外把该目录链接到 `~/.claude/skills/auto-commit-hook` 和/或 `~/.workbuddy/skills/auto-commit-hook`（Windows 用 junction，失败退回复制；`AUTOCOMMIT_NO_SKILL_LINK=1` 可跳过），否则这两个宿主扫不到 skill。 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/禁用/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
+三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/禁用/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
 
 ### 方式一：curl（无需 git）
 
@@ -37,7 +37,7 @@ agent 会先请求执行该命令的权限，确认后即完成安装，效果�
 | 步骤 | 需要什么 |
 |---|---|
 | 安装 skill | bash + curl（方式一、方式三）或 git（方式二）；Windows 用 Git Bash，macOS 用自带 bash 即可 |
-| 启用 hook | node（PATH 里没有时会尝试 ZCode / WorkBuddy 自带的运行时，Windows 与 macOS 应用路径都会探测）+ git + bash |
+| 启用 hook | node（PATH 里没有时会自动改用 ZCode / WorkBuddy 自带的 Electron，Windows 与 macOS 应用路径都会探测；手动跑脚本时用 `bash scripts/run.sh install.cjs` 同样自动发现）+ git + bash |
 | 运行 hook（每回合） | git + bash；AI 提交信息额外需要可用的模型来源，失败自动退化为 `chore: update N files` |
 
 ## 目录结构
@@ -51,6 +51,7 @@ auto-commit-hook/            ← skill 本体（即安装到 ~/.agents/skills/ �
 └── scripts/
     ├── lib.cjs              ← 配置合并、hook 检测、bash 探测
     ├── install.cjs / uninstall.cjs / status.cjs / setup-llm.cjs
+    └── run.sh               ← 自动发现 node / agent Electron 运行时后执行上述脚本
 install.sh                   ← 本文件所在的一键安装脚本
 readme.md
 ```
