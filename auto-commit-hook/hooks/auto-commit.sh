@@ -13,10 +13,11 @@
 # listed in the commit body. A path that cannot be unstaged aborts the commit
 # instead of being committed.
 # Failures: the hook always exits 0, but real failures (git add/commit, the
-# sensitive gate, missing git) are recorded in last-run.json plus a bounded
-# auto-commit.log under the state directory, and status.cjs prints the last
-# outcome. Claude Code also gets a non-blocking systemMessage JSON on stdout;
-# AUTOCOMMIT_NOTIFY_STDOUT=1/0 forces that channel on/off for other hosts.
+# sensitive gate, missing git) update last-run.json and append to a lazily
+# created, bounded auto-commit.log under the state directory, and status.cjs
+# prints the last outcome. Claude Code also gets a non-blocking systemMessage
+# JSON on stdout; AUTOCOMMIT_NOTIFY_STDOUT=1/0 forces that channel on/off for
+# other hosts.
 # Nothing else is written to stdout: hook stdout is parsed as strict JSON, and
 # non-zero exits are recorded as hook failures.
 # Runtime: a real node from PATH when available, otherwise the host agent's

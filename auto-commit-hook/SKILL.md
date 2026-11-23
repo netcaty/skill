@@ -290,9 +290,10 @@ The hook always exits 0 and never blocks a turn, so failures are reported out
 of band instead of aborting:
 
 - Every real failure (missing git, `git add`/`git commit` errors, a sensitive
-  file that could not be unstaged) is written to `last-run.json` and appended
-  to `auto-commit.log` in the agent's asset directory. A successful commit
-  overwrites `last-run.json` with `status: "ok"`.
+  file that could not be unstaged) overwrites `last-run.json` and appends to
+  `auto-commit.log` in the agent's asset directory. The log is created lazily
+  on the first failure; a successful commit only overwrites `last-run.json`
+  with `status: "ok"`, so a healthy install usually has no log file.
 - `status.cjs` prints that state: `last run: FAILED <time> (<stage>) <detail>`
   plus the log path; `--json` exposes the same object as `lastRun`.
 - Claude Code additionally receives a non-blocking stdout payload
