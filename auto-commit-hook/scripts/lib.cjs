@@ -653,6 +653,54 @@ function readLastRun(agent) {
   }
 }
 
+// Pause marker: a file in the agent's asset directory that makes
+// hooks/auto-commit.sh exit before any git work. The hook registration stays
+// untouched, so pausing and resuming need no config rewrite and take effect on
+// the next Stop. install.cjs deliberately preserves the marker (refreshing the
+// assets must not silently re-enable the hook); uninstall clears it so a later
+// install starts enabled.
+function pauseFile(agent) { return path.join(installDir(agent), "disabled.json"); }
+
+function readPause(agent) {
+  const file = pauseFile(agent);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePause(agent, extra) {
+  const file = pauseFile(agent);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const data = Object.assign({ at: new Date().toISOString(), agent }, extra || {});
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
+  return data;
+}
+
+function clearPause(agent) {
+  const file = pauseFile(agent);
+  const existed = fs.existsSync(file);
+  fs.rmSync(file, { force: true });
+  return existed;
+}
+
+// Config files that currently register this agent's hook: the standard user
+// scope, the workspace scope when a project was named, an explicit --config,
+// and every config recorded at install time.
+function hookedConfigs(opts, state) {
+  const files = new Set();
+  files.add(configPath(Object.assign({}, opts, { scope: "user", config: "" })));
+  if (opts.project) {
+    files.add(configPath(Object.assign({}, opts, { scope: "workspace", config: "" })));
+  }
+  if (opts.config) files.add(path.resolve(opts.config));
+  for (const key of Object.keys((state && state.installs) || {})) files.add(key);
+  return [...files].filter(file => installStatusIn(file) === true);
+}
+
 function writeState(state, agent) {
   fs.mkdirSync(installDir(agent), { recursive: true });
   fs.writeFileSync(stateFile(agent), JSON.stringify(state, null, 2) + "\n", "utf8");
@@ -711,6 +759,8 @@ const UPDATABLE_FILES = [
   "scripts/lib.cjs",
   "scripts/install.cjs",
   "scripts/uninstall.cjs",
+  "scripts/disable.cjs",
+  "scripts/enable.cjs",
   "scripts/status.cjs",
   "scripts/setup-llm.cjs",
   "scripts/run.sh"
@@ -842,6 +892,11 @@ module.exports = {
   readState,
   writeState,
   readLastRun,
+  pauseFile,
+  readPause,
+  writePause,
+  clearPause,
+  hookedConfigs,
   recordInstall,
   takeInstallState,
   installStatusIn,

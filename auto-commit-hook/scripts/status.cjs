@@ -24,6 +24,7 @@ function inspect(opts, scope, doctor) {
   const hook = lib.findOurHook(data);
   const count = lib.countOurHooks(data);
   const enabled = !!(data.hooks && typeof data.hooks === "object" && data.hooks.enabled === true);
+  const pause = lib.readPause(opts.agent);
   // WorkBuddy/Claude hooks carry the bash path inside the command string.
   const commandBash = hook && hook.type === "command"
     ? (/^"([^"]+)"/.exec(hook.command || "") || [])[1]
@@ -44,6 +45,9 @@ function inspect(opts, scope, doctor) {
     installExists: lib.isFile(installScript),
     bash,
     bashExists: bash ? lib.isFile(bash) : false,
+    disabled: !!pause,
+    disabledSince: pause && typeof pause.at === "string" ? pause.at : "",
+    pauseFile: lib.pauseFile(opts.agent),
     lastRun: lib.readLastRun(opts.agent)
   };
   if (doctor) {
@@ -245,6 +249,11 @@ function main() {
     }
     console.log("  scripts: " + (result.installExists ? "present" : "missing") +
       " (" + result.installDir + ")");
+    if (result.installed && result.disabled) {
+      console.log("  disabled: yes" +
+        (result.disabledSince ? " since " + result.disabledSince : "") +
+        " - run.sh enable to resume");
+    }
     if (result.lastRun && result.lastRun.status === "error") {
       console.log("  last run: FAILED " + (result.lastRun.at || "?") +
         " (" + (result.lastRun.stage || "?") + ") " +

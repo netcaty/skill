@@ -4,7 +4,7 @@ ZCode / WorkBuddy / Claude Code 的 git 自动检查点 skill：每个 agent 回
 
 ## 安装 skill
 
-三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/禁用/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
+三种方式效果相同：把 skill 目录装到 `~/.agents/skills/auto-commit-hook/`。**只装 skill，不注册任何 hook。** 装好后想启用每回合自动提交，在 agent 对话框输入「安装 hook」即可；启用/暂停/恢复/卸载/更新/查看状态/LLM 配置等对话短语见 `auto-commit-hook/SKILL.md`。
 
 ### 方式一：curl（无需 git）
 
@@ -50,9 +50,9 @@ auto-commit-hook/            ← skill 本体（即安装到 ~/.agents/skills/ �
 │   ├── auto-commit.sh       ← Stop hook：守卫、暂存、提交，永远 exit 0
 │   └── auto-commit-msg.cjs  ← 把 agent 最终回复转成 Conventional Commits 信息
 └── scripts/
-    ├── lib.cjs              ← 配置合并、hook 检测、bash 探测
-    ├── install.cjs / uninstall.cjs / status.cjs / setup-llm.cjs
-    └── run.sh               ← 脚本运行器：自动发现 node / agent Electron，子命令 install / uninstall / status / setup-llm
+    ├── lib.cjs              ← 配置合并、hook 检测、bash 探测、暂停标记
+    ├── install.cjs / uninstall.cjs / disable.cjs / enable.cjs / status.cjs / setup-llm.cjs
+    └── run.sh               ← 脚本运行器：自动发现 node / agent Electron，子命令 install / uninstall / disable / enable / status / setup-llm
 install.sh                   ← 本文件所在的一键安装脚本
 readme.md
 ```

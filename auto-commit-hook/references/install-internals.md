@@ -106,6 +106,12 @@ are in `SKILL.md`; this file is the reference for config locations and formats.
 Everything under `hooks/` and `scripts/` is installed verbatim; see the commands
 in `SKILL.md` for what each script does.
 
+`run.sh disable` writes `<asset dir>/disabled.json`; `auto-commit.sh` checks it
+before any git work, so pausing needs no config rewrite and takes effect on the
+next Stop. `install` preserves the marker (asset refreshes must not silently
+resume a paused hook) and `uninstall` removes it; `status` reports it as a
+`disabled:` line.
+
 The hook always executes the asset copies in `~/.zcode/hooks/auto-commit/`
 (or `~/.workbuddy/...`, `~/.claude/...`) — never this directory — which is why
 refreshing takes both steps in "Update the installed skill" in `SKILL.md`, and

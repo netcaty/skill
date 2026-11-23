@@ -31,6 +31,7 @@ function purgeIfUnused(opts, state) {
   const dir = lib.installDir(opts.agent);
   for (const name of lib.ASSET_FILES) fs.rmSync(path.join(dir, name), { force: true });
   fs.rmSync(lib.stateFile(opts.agent), { force: true });
+  fs.rmSync(lib.pauseFile(opts.agent), { force: true });
   try { fs.rmdirSync(dir); } catch {}  // succeeds only when backups/ is absent
   return true;
 }
@@ -57,6 +58,7 @@ function main() {
   }
 
   const cfgPath = lib.configPath(opts);
+  const wasPaused = !!lib.readPause(opts.agent);
   const { exists, data } = lib.readConfig(cfgPath);
   if (!exists) {
     report(opts, {
@@ -96,6 +98,7 @@ function main() {
   }
 
   let backup = "";
+  let pauseCleared = false;
   if (!opts.dryRun) {
     const createdByUs = entry && entry.configExisted === false;
     if (createdByUs && Object.keys(data).length === 0) {
@@ -104,6 +107,9 @@ function main() {
       backup = lib.writeConfig(cfgPath, data, opts.agent);
     }
     if (entry) lib.writeState(state, opts.agent);
+    // A paused hook that is being removed must not leave a marker behind: a
+    // later install would otherwise start silently disabled.
+    pauseCleared = lib.clearPause(opts.agent);
   }
 
   report(opts, {
@@ -111,6 +117,8 @@ function main() {
     configPath: cfgPath,
     installed: true,
     backup,
+    pauseCleared,
+    pauseWouldClear: opts.dryRun && wasPaused,
     purged: purgeIfUnused(opts, state),
     dryRun: opts.dryRun,
     previousEnabled: entry ? entry.previousEnabled : null
@@ -140,6 +148,11 @@ function report(opts, result) {
     console.log("  hooks.enabled removed (it was not set before install)");
   } else if (result.previousEnabled !== null) {
     console.log("  hooks.enabled restored to: " + String(result.previousEnabled));
+  }
+  if (result.pauseCleared) {
+    console.log("  pause  : removed the pause marker");
+  } else if (result.pauseWouldClear) {
+    console.log("  pause  : would remove the pause marker");
   }
   if (result.purged) {
     console.log("  purged : " + lib.installDir(opts.agent));

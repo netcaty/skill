@@ -48,6 +48,12 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 script_dir=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)
 
+# --- Paused ------------------------------------------------------------------
+# scripts/disable.cjs writes this marker; run.sh enable removes it. The hook
+# registration stays in the agent config, so pausing needs no settings rewrite
+# and resuming takes effect on the next Stop. Exit before any git or state work.
+[ -e "$script_dir/disabled.json" ] && exit 0
+
 # --- Host agent -------------------------------------------------------------
 # Every desktop agent exports its own environment-variable prefix, so the host
 # can be identified by plain parameter expansion - no subprocess, no process

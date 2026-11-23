@@ -6,7 +6,7 @@ description: >-
   user asks to enable or disable auto-commit, install, remove, update or upgrade the
   Stop hook or the installed skill, set up per-turn git checkpoints, or diagnose why
   automatic commits are not happening.
-  触发词：启用/禁用 自动提交，安装/卸载/更新/升级 hook 或 skill，查看 hook 状态。
+  触发词：启用/暂停/恢复/禁用 自动提交，安装/卸载/更新/升级 hook 或 skill，查看 hook 状态。
 ---
 
 # Auto-commit hook
@@ -64,8 +64,8 @@ any `safe.directory` hint it prints would not apply.
 
 `scripts/run.sh` is the entry point: `run.sh <command>` runs
 `scripts/<command>.cjs`, so the scripts are its subcommands (`install`,
-`uninstall`, `status`, `setup-llm`). The runner finds a Node runtime itself, so
-`node` does not have to be on `PATH`: node on `PATH`, `$AUTOCOMMIT_NODE`, the
+`uninstall`, `disable`, `enable`, `status`, `setup-llm`). The runner finds a
+Node runtime itself, so `node` does not have to be on `PATH`: node on `PATH`, `$AUTOCOMMIT_NODE`, the
 agent's bundled runtime (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
 `$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`), the app install locations
 (`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy,CodeBuddy}` on Windows;
@@ -96,6 +96,11 @@ bash scripts/run.sh status
 bash scripts/run.sh status --agent workbuddy --all --json
 bash scripts/run.sh status --doctor          # blockers: bash, git, disable flags, duplicate scopes
 bash scripts/run.sh status --update          # drift vs the source checkout
+
+# Pause/resume without touching the agent config (registration kept;
+# takes effect on the next Stop)
+bash scripts/run.sh disable
+bash scripts/run.sh enable
 
 # Uninstall (keep the copied scripts)
 bash scripts/run.sh uninstall
@@ -153,28 +158,40 @@ sessions.
 
 After installing, tell the user the dialog prompts — not raw script commands:
 `项目级别启用 hook` applies the hook to the current project only; `禁用 hook`
-removes it. When the user types them:
+pauses it, `恢复 hook` resumes it, and `卸载 hook` removes it. When the user
+types them:
 
 - `项目级别启用 hook`: nothing installed yet → run
   `bash scripts/run.sh install --scope workspace`. If user scope is installed,
   uninstall it first and then install workspace scope — install.cjs refuses
   both scopes at once, and running them together commits twice per turn. If
   workspace scope is already installed, just say so.
-- `禁用 hook`: run `bash scripts/run.sh status` first, then uninstall every
+- `禁用 hook`: run `bash scripts/run.sh status` first, then
+  `bash scripts/run.sh disable`. It writes a `disabled.json` marker in the
+  asset directory and rewrites no config, so the registration is kept and the
+  hook stops on the next Stop. Do not uninstall unless the user asks to remove
+  it (see `卸载 hook`).
+- `恢复 hook` (or `恢复自动提交`): run `bash scripts/run.sh enable`; it removes
+  the marker and the next Stop commits again. No reinstall is needed.
+- `卸载 hook`: run `bash scripts/run.sh status` first, then uninstall every
   installed scope (`bash scripts/run.sh uninstall`, plus `--scope workspace`
-  where needed). Keep the copied scripts unless the user asks for `--purge`.
+  where needed). This removes the entry and clears any pause marker. Keep the
+  copied scripts unless the user asks for `--purge`.
 - `更新 hook` (or `更新 skill`): run `bash scripts/run.sh status --update` first
   — its `update` section names the stale files. Then refresh the skill directory
   (checkout: `bash install.sh` there; no checkout: re-run the curl one-liner),
   run `bash scripts/run.sh install`, and re-run `status --update` to verify. Say
   that hook assets apply immediately while SKILL.md changes need a new session.
+  A paused hook stays paused across `install` (by design); `enable` resumes it.
 - `查看 hook 状态`: run `bash scripts/run.sh status --all` (add `--json` when the
   result is parsed programmatically). Report installed/enabled per scope. Add
   `--update` when the user also asks about outdated files, and `--doctor` for
   blockers (missing bash, Claude disable flags, git ownership, both scopes
   installed). A `last run: ok` line is healthy; `last run: FAILED
   <time> (<stage>)` names the failing step and the log path under the install
-  directory, so quote it back to the user and suggest the fix. The `ai:` line
+  directory, so quote it back to the user and suggest the fix. A `disabled:
+  yes` line means the hook is paused, not uninstalled; `run.sh enable`
+  resumes it. The `ai:` line
   explains a heuristic commit message — `disabled`, `skipped`, `unavailable`
   (checked sources) or `error` (per-model failures) — and is diagnostics only,
   not a failed commit.
@@ -206,6 +223,10 @@ the installed hook by hand.
   installing.
 
 ## Uninstall
+
+To stop commits temporarily, use `disable` (pause marker) instead — it leaves
+the registration alone and resumes with `enable`. Uninstall is for removing
+the registration itself.
 
 `uninstall.cjs` removes only entries whose script is `auto-commit.sh`, preserves all
 other hooks, restores the `hooks.enabled` value recorded at install, and deletes the

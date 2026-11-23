@@ -52,7 +52,9 @@ git -C /path/to/repo log -1
 
 ## Troubleshooting
 
-- **Nothing commits**: run `status --doctor`; it reports the configured bash,
+- **Nothing commits**: check the `disabled:` line first — the hook may be
+  paused, not broken. `run.sh enable` removes the marker and the next Stop runs
+  again. Otherwise run `status --doctor`; it reports the configured bash,
   Claude `disableAllHooks` / `allowManagedHooksOnly`, and whether git can use
   the project. A `last run: FAILED ...` line names the failing stage and the log
   path. On ZCode also confirm `hooks.enabled: true`; on Claude Code check

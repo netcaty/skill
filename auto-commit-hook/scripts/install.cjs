@@ -54,6 +54,7 @@ function main() {
   // of them silently stops the hook.
   const disabledBy = opts.agent === "claude" ? lib.claudeDisableFlags(project) : [];
   const lastRun = lib.readLastRun(opts.agent);
+  const paused = lib.readPause(opts.agent);
   const script = lib.installScript(opts.agent);
   // ZCode takes the script as a POSIX argv entry (safe on Windows); the
   // command-string agents (workbuddy, claude) embed the native path in a
@@ -91,6 +92,8 @@ function main() {
     previousEnabled,
     existingOtherHooks: existingHooks,
     disabledBy,
+    disabled: !!paused,
+    disabledSince: paused && typeof paused.at === "string" ? paused.at : "",
     lastRun,
     git
   };
@@ -109,6 +112,7 @@ function main() {
   console.log("  bash   : " + bash);
   if (backup) console.log("  backup : " + backup);
   if (!exists) console.log("  note   : created a new config file");
+  if (paused) console.log("  paused : yes (" + lib.pauseFile(opts.agent) + ")");
   // Only the zcode family sets hooks.enabled; command-string agents (workbuddy,
   // claude) never touch the flag, so the warning below does not apply to them.
   if (!usesCommandString && previousEnabled !== true && existingHooks > 0) {
@@ -133,6 +137,11 @@ function main() {
       (lastRun.stage || "?") + "): " + (lastRun.detail || ""));
     console.log("Run node scripts/status.cjs for the full state and log path.");
   }
+  if (paused) {
+    console.log("");
+    console.log("Note: auto-commit is paused; the refreshed assets stay paused.");
+    console.log("Run scripts/run.sh enable to resume, or scripts/run.sh uninstall to remove it.");
+  }
   if (opts.agent === "claude" && opts.scope === "workspace") {
     console.log("");
     console.log("Note: project-level Claude Code hooks require workspace trust (approve the");
@@ -142,7 +151,7 @@ function main() {
   console.log("");
   console.log("Note: each turn this hook stages all workspace changes (git add -A) and commits with --no-verify.");
   console.log("Start a new session (or reopen the workspace) for the hook to take effect.");
-  console.log("Scope or undo, type in the agent's dialog box: 项目级别启用 hook / 禁用 hook");
+  console.log("Pause/resume/remove, type in the agent's dialog box: 禁用 hook / 恢复 hook / 卸载 hook");
 }
 
 try {

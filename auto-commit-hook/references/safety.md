@@ -16,6 +16,10 @@ The full behaviour list behind the short summary in `SKILL.md`.
   layer 2), and flagged paths are always matched against the real staged list,
   so a hallucinated path can never unstage anything.
 - It uses `--no-verify` and disables GPG signing for that commit.
+- The hook can be paused without editing any agent config: `run.sh disable`
+  writes a `disabled.json` marker into the asset directory and the script exits
+  before any git work; `run.sh enable` removes it. Refreshing the assets
+  (`install`) keeps the marker; uninstalling clears it.
 - It commits on the current branch and skips merge/rebase/conflict/detached-HEAD
   states.
 - Concurrent Stop events in the same repository serialize on
