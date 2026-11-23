@@ -224,9 +224,36 @@ function parseArgs(argv) {
   return opts;
 }
 
+function realish(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+// Same path on the current platform (Windows and macOS compare
+// case-insensitively by default) and behind junctions/symlinks.
+function samePath(a, b) {
+  return realish(a).toLowerCase() === realish(b).toLowerCase();
+}
+
+let warnedSkillDir = false;
+
 function projectDir(opts) {
-  return path.resolve(opts.project || process.env.CODEBUDDY_PROJECT_DIR ||
+  const project = path.resolve(opts.project || process.env.CODEBUDDY_PROJECT_DIR ||
     process.env.CLAUDE_PROJECT_DIR || process.env.ZCODE_PROJECT_DIR || process.cwd());
+  // The scripts can be invoked from anywhere (scripts/run.sh resolves its own
+  // directory), but they used to be run after cd'ing into the skill directory,
+  // which made workspace scope target the skill itself. Warn once instead of
+  // silently installing a project hook into the skill checkout.
+  if (opts.scope === "workspace" && !opts.project && !warnedSkillDir &&
+      samePath(project, SKILL_ROOT)) {
+    warnedSkillDir = true;
+    console.error("warning: workspace scope resolved to the skill directory (" +
+      project + "); run from the target repository or pass --project <dir>");
+  }
+  return project;
 }
 
 // WorkBuddy's CLI home is fixed at ~/.workbuddy; the settings.json name

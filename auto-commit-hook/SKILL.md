@@ -47,18 +47,19 @@ Use a raw.githubusercontent URL; piping the github.com page feeds HTML to bash.
 
 ## Quick commands
 
-Run these from this skill directory. Every command accepts `--scope user`
-(default) or `--scope workspace`. The agent (`zcode`, `workbuddy` or `claude`) is
-auto-detected from the session environment the same way the hook scripts do it,
-so `--agent` is only needed to override detection (e.g. installing for
-WorkBuddy from a ZCode session).
+Run these from anywhere; `scripts/run.sh` locates its own scripts. Every command
+accepts `--scope user` (default) or `--scope workspace`. The agent (`zcode`,
+`workbuddy` or `claude`) is auto-detected from the session environment the same
+way the hook scripts do it, so `--agent` is only needed to override detection
+(e.g. installing for WorkBuddy from a ZCode session).
 
 Workspace scope resolves the project from the session environment
 (`CLAUDE_PROJECT_DIR`, `ZCODE_PROJECT_DIR`, `CODEBUDDY_PROJECT_DIR`) and falls
 back to the current directory, so run workspace-scope commands from the target
-repo. Running them from the skill directory treats that directory as the
-project: `status.cjs` then reports `not a git repository`, and any
-`safe.directory` hint it prints does not apply.
+repo or pass `--project <dir>`. If the resolved project is the skill directory
+itself, the scripts print a warning: `status` reports `not a git repository`
+there, an install would register a workspace hook for the skill checkout, and
+any `safe.directory` hint it prints would not apply.
 
 `scripts/run.sh` is the entry point: `run.sh <command>` runs
 `scripts/<command>.cjs`, so the scripts are its subcommands (`install`,
