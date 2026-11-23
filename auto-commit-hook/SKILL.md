@@ -20,6 +20,21 @@ The hook is a pair of scripts bundled under `hooks/`:
   subject/body; uses the provider config when available and local heuristics
   otherwise, recording the attempt under `ai` in `last-run.json`
 
+## Conventions
+
+This document is host-neutral. Placeholders stand for values the scripts resolve
+at runtime; replace them with the resolved values before running a command. The
+concrete per-host table lives in [install internals](references/install-internals.md).
+
+| placeholder | meaning |
+|---|---|
+| `<skill-dir>` | installed skill directory: `$AUTOCOMMIT_INSTALL_DIR`, default `~/.agents/skills/auto-commit-hook` |
+| `<agent>` | detected host profile id, as printed by `status` and accepted by `--agent` |
+| `<AGENT>` | `<agent>` uppercased; prefixes the host's session environment variables |
+| `<agent-home>` | that host's own config home (one directory per host) |
+| `<hooks-dir>` | `<agent-home>/hooks/auto-commit`, where `install.cjs` copies the hook assets |
+| `<skills-dir>` | `<agent-home>/skills/auto-commit-hook`, the discoverability link some hosts require |
+
 ## One-line install
 
 For machines that only have the repository URL (no local checkout):
@@ -28,19 +43,15 @@ For machines that only have the repository URL (no local checkout):
 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
-The script only stages this skill directory to `~/.agents/skills/auto-commit-hook/`
-— it does not register any hook. On machines with Claude Code (`~/.claude`
-exists or `claude` is on `PATH`) or WorkBuddy (`~/.workbuddy` exists or
-`workbuddy` is on `PATH`) it also exposes the staged copy at
-`~/.claude/skills/auto-commit-hook/` and/or
-`~/.workbuddy/skills/auto-commit-hook/` — a directory junction on Windows, a
-symlink on macOS/Linux, falling back to a copy. Claude Code only scans
-`~/.claude/skills` and WorkBuddy only scans `~/.workbuddy/skills`; ZCode reads
-`~/.agents/skills` directly. Set `AUTOCOMMIT_NO_SKILL_LINK=1` to skip this.
-To enable auto-commit afterwards:
+The script only stages this skill directory to `<skill-dir>` — it does not
+register any hook. On machines with a host that only scans its own `skills/`
+directory (`<skills-dir>`), it also exposes the staged copy there — a directory
+junction on Windows, a symlink on macOS/Linux, falling back to a copy; a host
+that reads `<skill-dir>` directly needs no link. Set
+`AUTOCOMMIT_NO_SKILL_LINK=1` to skip this. To enable auto-commit afterwards:
 
 ```bash
-bash ~/.agents/skills/auto-commit-hook/scripts/run.sh install
+bash <skill-dir>/scripts/run.sh install
 ```
 
 (agent auto-detected from the session environment, user scope by default).
@@ -49,34 +60,33 @@ Use a raw.githubusercontent URL; piping the github.com page feeds HTML to bash.
 ## Quick commands
 
 Run these from anywhere; `scripts/run.sh` locates its own scripts. Every command
-accepts `--scope user` (default) or `--scope workspace`. The agent (`zcode`,
-`workbuddy` or `claude`) is auto-detected from the session environment the same
-way the hook scripts do it, so `--agent` is only needed to override detection
-(e.g. installing for WorkBuddy from a ZCode session).
+accepts `--scope user` (default) or `--scope workspace`. The host profile
+(`<agent>`) is auto-detected from the session environment the same way the hook
+scripts do it, so `--agent` is only needed to override detection (e.g. installing
+for another host from inside a session).
 
-Workspace scope resolves the project from the session environment
-(`CLAUDE_PROJECT_DIR`, `ZCODE_PROJECT_DIR`, `CODEBUDDY_PROJECT_DIR`) and falls
-back to the current directory, so run workspace-scope commands from the target
-repo or pass `--project <dir>`. If the resolved project is the skill directory
-itself, the scripts print a warning: `status` reports `not a git repository`
-there, an install would register a workspace hook for the skill checkout, and
-any `safe.directory` hint it prints would not apply.
+Workspace scope resolves the project from the session environment (the host's
+`<AGENT>_PROJECT_DIR` variable) and falls back to the current directory, so run
+workspace-scope commands from the target repo or pass `--project <dir>`. If the
+resolved project is the skill directory itself, the scripts print a warning:
+`status` reports `not a git repository` there, an install would register a
+workspace hook for the skill checkout, and any `safe.directory` hint it prints
+would not apply.
 
 `scripts/run.sh` is the entry point: `run.sh <command>` runs
 `scripts/<command>.cjs`, so the scripts are its subcommands (`install`,
 `uninstall`, `disable`, `enable`, `status`, `setup-llm`). The runner finds a
-Node runtime itself, so `node` does not have to be on `PATH`: node on `PATH`, `$AUTOCOMMIT_NODE`, the
-agent's bundled runtime (`$ZCODE_NODE_FALLBACK_EXEC_PATH` /
-`$WORKBUDDY_NODE_FALLBACK_EXEC_PATH`), the app install locations
-(`%LOCALAPPDATA%\Programs\{ZCode,WorkBuddy,CodeBuddy}` on Windows;
-`/Applications/*.app` on macOS, `~/Applications` probed too, with the executable
-read from Info.plist's `CFBundleExecutable` — it may differ from the bundle
-name), then standalone Node installs (scoop, `Program Files\nodejs`, Homebrew,
-`/usr/local/bin`). Electron binaries are started with `ELECTRON_RUN_AS_NODE=1`
-automatically; `.cmd`/`.bat` shims are skipped because bash cannot exec them
-directly. `bash scripts/run.sh --print` shows the runtime without running a
-command, and `node scripts/<command>.cjs ...` stays equivalent wherever Node is
-on `PATH`.
+Node runtime itself, so `node` does not have to be on `PATH`: node on `PATH`,
+`$AUTOCOMMIT_NODE`, the agent's bundled runtime
+(`$<AGENT>_NODE_FALLBACK_EXEC_PATH`), the host app's install location(s)
+(`%LOCALAPPDATA%\Programs` on Windows; `/Applications/*.app` on macOS,
+`~/Applications` probed too, with the executable read from Info.plist's
+`CFBundleExecutable` — it may differ from the bundle name), then standalone Node
+installs (scoop, `Program Files\nodejs`, Homebrew, `/usr/local/bin`). Electron
+binaries are started with `ELECTRON_RUN_AS_NODE=1` automatically; `.cmd`/`.bat`
+shims are skipped because bash cannot exec them directly.
+`bash scripts/run.sh --print` shows the runtime without running a command, and
+`node scripts/<command>.cjs ...` stays equivalent wherever Node is on `PATH`.
 
 ```bash
 # Install for every workspace (default scope)
@@ -85,15 +95,15 @@ bash scripts/run.sh install
 # Install for the current project only
 bash scripts/run.sh install --scope workspace
 
-# Install for WorkBuddy (agent auto-detected, or force it with --agent)
-bash scripts/run.sh install --agent workbuddy
+# Install for a specific host (auto-detected, or force it with --agent)
+bash scripts/run.sh install --agent <agent>
 
 # Preview without writing
 bash scripts/run.sh install --dry-run
 
 # Inspect
 bash scripts/run.sh status
-bash scripts/run.sh status --agent workbuddy --all --json
+bash scripts/run.sh status --agent <agent> --all --json
 bash scripts/run.sh status --doctor          # blockers: bash, git, disable flags, duplicate scopes
 bash scripts/run.sh status --update          # drift vs the source checkout
 
@@ -106,11 +116,11 @@ bash scripts/run.sh enable
 bash scripts/run.sh uninstall
 
 # Uninstall and remove copied scripts when nothing else references them
-bash scripts/run.sh uninstall --agent workbuddy --scope workspace --purge
+bash scripts/run.sh uninstall --agent <agent> --scope workspace --purge
 
 # Manual LLM endpoint for commit messages (stored in
-# ~/.agents/skills/auto-commit-hook/llm-config.json; wins over the session
-# provider, AUTOCOMMIT_LLM_* env overrides win over it)
+# <skill-dir>/llm-config.json; wins over the session provider,
+# AUTOCOMMIT_LLM_* env overrides win over it)
 bash scripts/run.sh setup-llm --url https://example.com/v1/messages --key sk-... --model glm-5.3-flash,auto/glm-5.3-flash
 bash scripts/run.sh setup-llm --show
 bash scripts/run.sh setup-llm --clear
@@ -119,10 +129,8 @@ bash scripts/run.sh setup-llm --clear
 ## Update the installed skill
 
 The installed copies live in two places that go stale independently:
-`~/.agents/skills/auto-commit-hook/` (staged by `install.sh`; the
-`~/.claude/skills` and `~/.workbuddy/skills` links follow it) and the hook
-assets `~/.claude/hooks/auto-commit/`, `~/.workbuddy/hooks/auto-commit/` or
-`~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status --update`
+`<skill-dir>` (staged by `install.sh`; the `<skills-dir>` link follows it) and
+the hook assets `<hooks-dir>` (copied by `install.cjs`). `status --update`
 hashes the installed files and reports drift in its `update` section (`--json`
 adds an `update` object to every result):
 
@@ -132,7 +140,7 @@ bash scripts/run.sh status --update --source /path/to/skill-checkout   # when no
 ```
 
 The source checkout is remembered in
-`~/.agents/skills/auto-commit-hook/.source.json` (written by `install.sh` —
+`<skill-dir>/.source.json` (written by `install.sh` —
 local mode records the checkout path, download mode the repo URL), so
 `status --update` usually finds it without `--source`. When no local checkout is
 recorded, the skill-dir comparison is skipped and the agent falls back to the
@@ -143,9 +151,8 @@ config is untouched):
 
 1. Refresh the skill directory: run `install.sh` from the checkout
    (`bash install.sh` — local mode), or, without a checkout, re-run the
-   curl one-liner above (download mode). This also refreshes the agent skill
-   links (`~/.claude/skills`, `~/.workbuddy/skills`), which point at the staged
-   copy.
+   curl one-liner above (download mode). This also refreshes the host skill
+   links (`<skills-dir>`), which point at the staged copy.
 2. Refresh the hook assets: `bash scripts/run.sh install`.
 3. Re-run `bash scripts/run.sh status --update` and expect `up to date` on both
    lines.
@@ -186,7 +193,7 @@ types them:
 - `查看 hook 状态`: run `bash scripts/run.sh status --all` (add `--json` when the
   result is parsed programmatically). Report installed/enabled per scope. Add
   `--update` when the user also asks about outdated files, and `--doctor` for
-  blockers (missing bash, Claude disable flags, git ownership, both scopes
+  blockers (missing bash, host disable flags, git ownership, both scopes
   installed). A `last run: ok` line is healthy; `last run: FAILED
   <time> (<stage>)` names the failing step and the log path under the install
   directory, so quote it back to the user and suggest the fix. A `disabled:
@@ -211,13 +218,13 @@ bash scripts/run.sh status --scope workspace
 Expect `installed` and `scripts: present`, and after a turn `last run: ok ...`.
 The companion `ai:` line says how the message was produced (an `unavailable`
 or `error` value explains a heuristic-only message without failing the run).
-`enabled: true` appears for ZCode only (command-string agents report
-`enabled: (n/a for command hooks)`). Add `--doctor` to check the configured
-bash, Claude disable flags, git usability (a `safe.directory` fix is suggested
-only for the ownership case), and duplicate scope installs. A
-`last run: FAILED ...` line names the failing stage and the log path; see
-[troubleshooting](references/troubleshooting.md), which also shows how to run
-the installed hook by hand.
+`enabled: true` appears only for hosts whose hook format uses an `enabled` flag
+(command-string hosts report `enabled: (n/a for command hooks)`). Add `--doctor`
+to check the configured bash, host disable flags, git usability (a
+`safe.directory` fix is suggested only for the ownership case), and duplicate
+scope installs. A `last run: FAILED ...` line names the failing stage and the log
+path; see [troubleshooting](references/troubleshooting.md), which also shows how
+to run the installed hook by hand.
 
 - New sessions pick up the hook. Start a new session or reopen the workspace after
   installing.
@@ -246,8 +253,8 @@ them (the `backups/` directory is kept).
   serializes concurrent Stops on `<git-dir>/auto-commit.lock`, and skips
   `stop_hook_active: true` re-entries.
 
-The full list — Claude Code's merged hook files, `disableAllHooks`, workspace
-trust, scope defaults and `.gitignore` caveats — is in
+The full list — merged hook files, host disable flags, workspace trust, scope
+defaults and `.gitignore` caveats — is in
 [safety](references/safety.md).
 
 ## Reference files
