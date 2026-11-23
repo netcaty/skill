@@ -18,6 +18,9 @@ function inspect(opts, scope) {
   const hook = lib.findOurHook(data);
   const count = lib.countOurHooks(data);
   const enabled = !!(data.hooks && typeof data.hooks === "object" && data.hooks.enabled === true);
+  // Claude Code merges user/project/local settings; a disable switch in any of
+  // them silently stops the hook from running.
+  const disabledBy = opts.agent === "claude" ? lib.claudeDisableFlags(project) : [];
   const git = lib.gitCheck(project);
   // WorkBuddy hooks carry the bash path inside the command string.
   const commandBash = hook && hook.type === "command"
@@ -39,6 +42,7 @@ function inspect(opts, scope) {
     installExists: lib.isFile(installScript),
     bash,
     bashExists: bash ? lib.isFile(bash) : false,
+    disabledBy,
     git
   };
 }
@@ -157,6 +161,10 @@ function main() {
       }
       if (!result.bashExists) {
         console.log("  warning: the configured bash executable is missing");
+      }
+      for (const item of result.disabledBy || []) {
+        console.log("  warning: Claude Code ignores this hook while " +
+          item.flag + " is set in " + item.file);
       }
     }
     console.log("  scripts: " + (result.installExists ? "present" : "missing") +

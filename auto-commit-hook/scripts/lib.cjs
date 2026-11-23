@@ -92,15 +92,17 @@ const AGENT_PROFILES = {
     installDir(home) {
       return path.join(home, ".claude", "hooks", "auto-commit");
     },
-    // Claude Code's documented settings layout: shared user settings and
-    // per-project settings.json under .claude/.
+    // Claude Code merges user settings with both project files. The hook
+    // command embeds this machine's bash path, so the project scope targets
+    // settings.local.json (personal, normally gitignored); settings.json is
+    // team-shared and would be committed with a path that breaks teammates.
     configPaths(project, home) {
       return {
-        workspace: path.join(project, ".claude", "settings.json"),
+        workspace: path.join(project, ".claude", "settings.local.json"),
         user: path.join(home, ".claude", "settings.json")
       };
     },
-    hookSchema: "command-flat-matcher"
+    hookSchema: "command-flat-claude"
   })
 };
 
@@ -263,11 +265,23 @@ function readConfig(file) {
   return { exists: true, data };
 }
 
-function writeConfig(file, data) {
+// Config backups live under the agent's asset directory, never next to the
+// config: a workspace config may be gitignored while its `.bak` sibling is
+// not, and the hook's own `git add -A` would then commit a copy of local
+// settings (which can contain tokens). The path hash keeps user, workspace
+// and --config targets that share a basename apart.
+function backupFile(file, agent) {
+  const dir = path.join(installDir(agent), "backups");
+  const hash = crypto.createHash("sha1").update(path.resolve(file)).digest("hex").slice(0, 8);
+  return path.join(dir, path.basename(file) + "." + hash + ".zcode-auto-commit.bak");
+}
+
+function writeConfig(file, data, agent) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   let backup = "";
   if (fs.existsSync(file)) {
-    backup = file + ".zcode-auto-commit.bak";
+    backup = backupFile(file, agent);
+    fs.mkdirSync(path.dirname(backup), { recursive: true });
     fs.copyFileSync(file, backup);
   }
   const tmp = file + ".tmp-" + process.pid;
@@ -289,6 +303,35 @@ function previousEnabledValue(config) {
   const hooks = config && config.hooks;
   if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) return "missing";
   return Object.prototype.hasOwnProperty.call(hooks, "enabled") ? hooks.enabled : "missing";
+}
+
+// Claude Code merges hooks from user settings, project settings.json and
+// project settings.local.json; disableAllHooks / allowManagedHooksOnly in any
+// of them stops a registered Stop hook from running. Best-effort: a managed
+// policy file cannot be read from here.
+function claudeSettingsFiles(project) {
+  const home = os.homedir();
+  return [
+    path.join(home, ".claude", "settings.json"),
+    path.join(project, ".claude", "settings.json"),
+    path.join(project, ".claude", "settings.local.json")
+  ];
+}
+
+function claudeDisableFlags(project) {
+  const out = [];
+  const seen = new Set();
+  for (const file of claudeSettingsFiles(project)) {
+    const key = path.resolve(file).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      const { data } = readConfig(file);
+      if (data.disableAllHooks === true) out.push({ file, flag: "disableAllHooks" });
+      if (data.allowManagedHooksOnly === true) out.push({ file, flag: "allowManagedHooksOnly" });
+    } catch {}
+  }
+  return out;
 }
 
 function isOurHook(hook) {
@@ -391,19 +434,20 @@ const HOOK_SCHEMA_WRITERS = {
     });
     return hooks;
   },
-  // Claude Code uses the same command-string family plus a per-group matcher
-  // (unused for Stop but part of the documented schema); no hooks.enabled.
-  "command-flat-matcher"(hooks, bash, script, timeoutMs) {
+  // Claude Code uses the same command-string family; matcher is optional and
+  // irrelevant for Stop (the verified probe config omits it), timeout is whole
+  // seconds, and statusMessage is supported. No hooks.enabled here either.
+  "command-flat-claude"(hooks, bash, script, timeoutMs) {
     if (hooks.Stop !== undefined && !Array.isArray(hooks.Stop)) {
       throw new Error("Existing 'hooks.Stop' value is not an array; refusing to modify it");
     }
     if (!Array.isArray(hooks.Stop)) hooks.Stop = [];
     hooks.Stop.push({
-      matcher: "",
       hooks: [{
         type: "command",
         command: hookCommandWorkbuddy(bash, script),
-        timeout: Math.max(1, Math.round(timeoutMs / 1000))
+        timeout: Math.max(1, Math.round(timeoutMs / 1000)),
+        statusMessage: "Auto-commit checkpoint"
       }]
     });
     return hooks;
@@ -467,6 +511,15 @@ function findBash(agent) {
   if (agent === "workbuddy") {
     const bundled = process.env.CODEBUDDY_CODE_GIT_BASH_PATH;
     if (bundled && isFile(bundled)) return path.resolve(bundled);
+  }
+  // Claude Code exports the bash it uses for hook commands (and points SHELL
+  // at it in Git Bash mode); prefer that exact binary for the registration.
+  if (agent === "claude") {
+    for (const candidate of [process.env.CLAUDE_CODE_GIT_BASH_PATH, process.env.SHELL]) {
+      if (candidate && /(^|[\\/])bash(\.exe)?$/i.test(candidate) && isFile(candidate)) {
+        return path.resolve(candidate);
+      }
+    }
   }
   const explicit = process.env.AUTOCOMMIT_BASH;
   if (explicit && isFile(explicit)) return path.resolve(explicit);
@@ -723,8 +776,11 @@ module.exports = {
   otherConfigPath,
   readConfig,
   writeConfig,
+  backupFile,
   isFile,
   previousEnabledValue,
+  claudeSettingsFiles,
+  claudeDisableFlags,
   isOurHook,
   countOurHooks,
   countAllHooks,

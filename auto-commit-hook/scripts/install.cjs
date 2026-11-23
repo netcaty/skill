@@ -1,5 +1,6 @@
 "use strict";
 
+const path = require("path");
 const lib = require("./lib.cjs");
 
 function main() {
@@ -17,7 +18,7 @@ function main() {
       "                           CLAUDE_PROJECT_DIR / ZCODE_PROJECT_DIR / cwd)",
       "  --config <file>          Explicit hooks config path",
       "  --timeout <ms>           Hook timeout, default 30000",
-      "  --force                  Install even if the other scope already has the hook",
+      "  --force                  Install even if another config already has the hook",
       "  --dry-run                Print the planned change without writing",
       "  --json                   Machine-readable result"
     ].join("\n"));
@@ -32,14 +33,26 @@ function main() {
   }
 
   const other = lib.otherConfigPath(opts);
-  if (other && lib.installStatusIn(other) === true && !opts.force) {
-    throw new Error("Auto-commit hook is already installed at " + other +
-      ". Uninstall it first, or pass --force to install both scopes (two commits per turn).");
+  // Claude Code merges user settings and both project files, so check all of
+  // them: an older install in settings.json must not coexist with the new
+  // workspace target settings.local.json.
+  const checkedConfigs = opts.agent === "claude" && !opts.config
+    ? lib.claudeSettingsFiles(project)
+    : [other].filter(Boolean);
+  const conflicts = checkedConfigs
+    .filter(file => path.resolve(file).toLowerCase() !== path.resolve(cfgPath).toLowerCase())
+    .filter(file => lib.installStatusIn(file) === true);
+  if (conflicts.length && !opts.force) {
+    throw new Error("Auto-commit hook is already installed at " + conflicts.join(", ") +
+      ". Uninstall it first, or pass --force to install both (two commits per turn).");
   }
 
   const { exists, data } = lib.readConfig(cfgPath);
   const previousEnabled = lib.previousEnabledValue(data);
   const existingHooks = lib.countAllHooks(data);
+  // Claude Code merges user/project/local settings, so a disable switch in any
+  // of them silently stops the hook.
+  const disabledBy = opts.agent === "claude" ? lib.claudeDisableFlags(project) : [];
   const script = lib.installScript(opts.agent);
   // ZCode takes the script as a POSIX argv entry (safe on Windows); the
   // command-string agents (workbuddy, claude) embed the native path in a
@@ -52,7 +65,7 @@ function main() {
   let backup = "";
   if (!opts.dryRun) {
     lib.installAssets(opts.agent);
-    backup = lib.writeConfig(cfgPath, data);
+    backup = lib.writeConfig(cfgPath, data, opts.agent);
     lib.recordInstall(cfgPath, previousEnabled, exists, opts.agent);
   }
 
@@ -76,6 +89,7 @@ function main() {
     dryRun: opts.dryRun,
     previousEnabled,
     existingOtherHooks: existingHooks,
+    disabledBy,
     git
   };
 
@@ -105,6 +119,17 @@ function main() {
     console.log("Warning: git cannot access " + project + " under the current user.");
     console.log("The hook will exit silently until this is fixed:");
     console.log("  git config --global --add safe.directory " + project.replace(/\\/g, "/"));
+  }
+  if (disabledBy.length) {
+    console.log("");
+    console.log("Warning: Claude Code will not run this hook while these settings disable hooks:");
+    for (const item of disabledBy) console.log("  " + item.flag + " in " + item.file);
+  }
+  if (opts.agent === "claude" && opts.scope === "workspace") {
+    console.log("");
+    console.log("Note: project-level Claude Code hooks require workspace trust (approve the");
+    console.log("project or confirm under /hooks). The hook went to settings.local.json;");
+    console.log("use --config .claude/settings.json only if you intend to commit it.");
   }
   console.log("");
   console.log("Note: each turn this hook stages all workspace changes (git add -A) and commits with --no-verify.");

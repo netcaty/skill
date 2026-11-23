@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("fs");
+const path = require("path");
 const lib = require("./lib.cjs");
 
 function purgeIfUnused(opts, state) {
@@ -25,7 +26,12 @@ function purgeIfUnused(opts, state) {
       lib.installDir(opts.agent) + " in place. Remove it manually if no hook uses it.");
     return false;
   }
-  fs.rmSync(lib.installDir(opts.agent), { recursive: true, force: true });
+  // Remove the copied hook files but keep the backups/ directory: it holds
+  // pre-install config snapshots that are deliberately outside the workspace.
+  const dir = lib.installDir(opts.agent);
+  for (const name of lib.ASSET_FILES) fs.rmSync(path.join(dir, name), { force: true });
+  fs.rmSync(lib.stateFile(opts.agent), { force: true });
+  try { fs.rmdirSync(dir); } catch {}  // succeeds only when backups/ is absent
   return true;
 }
 
@@ -42,7 +48,8 @@ function main() {
       "  --project <dir>          Workspace root (default: CODEBUDDY_PROJECT_DIR /",
       "                           CLAUDE_PROJECT_DIR / ZCODE_PROJECT_DIR / cwd)",
       "  --config <file>          Explicit hooks config path",
-      "  --purge                  Remove installed scripts when no config references them",
+      "  --purge                  Remove installed scripts (keeps backups) when no",
+      "                           config references them",
       "  --dry-run                Print the planned change without writing",
       "  --json                   Machine-readable result"
     ].join("\n"));
@@ -94,7 +101,7 @@ function main() {
     if (createdByUs && Object.keys(data).length === 0) {
       fs.rmSync(cfgPath, { force: true });
     } else {
-      backup = lib.writeConfig(cfgPath, data);
+      backup = lib.writeConfig(cfgPath, data, opts.agent);
     }
     if (entry) lib.writeState(state, opts.agent);
   }

@@ -167,11 +167,15 @@ removes it. When the user types them:
    |---|---|---|
    | zcode | `<repo>/.zcode/config.json` | `~/.zcode/cli/config.json` |
    | workbuddy | `<repo>/.workbuddy/settings.json` | `~/.workbuddy/settings.json` |
-   | claude | `<repo>/.claude/settings.json` | `~/.claude/settings.json` |
+   | claude | `<repo>/.claude/settings.local.json` | `~/.claude/settings.json` |
 
    WorkBuddy's user-scope file name follows the verified project-level layout;
-   confirm it once with `status.cjs` on a real machine. Claude Code uses its
-   documented settings layout.
+   confirm it once with `status.cjs` on a real machine. Claude Code merges user
+   settings, project `settings.json` (team-shared) and project
+   `settings.local.json`; the installer writes the personal local file because
+   the command embeds this machine's bash path. Pass
+   `--config .claude/settings.json` only if the hook is meant to be committed
+   for the whole team.
 3. Registers the hook in the agent's own format. ZCode gets `hooks.enabled: true`
    (required for configuration-file hooks; this also enables any other
    configuration hooks in that file — the installer warns):
@@ -202,19 +206,19 @@ removes it. When the user types them:
 }
 ```
 
-   Claude Code uses the same command-string family in its settings.json, plus a
-   per-group `matcher` (unused for Stop but part of the documented schema; no
-   `enabled` flag here either):
+   Claude Code uses the same command-string family; `matcher` is optional and
+   omitted for Stop (the verified settings file has none), `timeout` is whole
+   seconds, `statusMessage` is supported, and there is no `enabled` flag:
 
 ```json
 {
   "hooks": {
     "Stop": [{
-      "matcher": "",
       "hooks": [{
         "type": "command",
         "command": "\"<bash>\" \"<script>/auto-commit.sh\"",
-        "timeout": 30
+        "timeout": 30,
+        "statusMessage": "Auto-commit checkpoint"
       }]
     }]
   }
@@ -234,11 +238,16 @@ removes it. When the user types them:
    `CLAUDE_CODE_MODEL_CAPABILITIES`; the saved `llm-config.json` and
    `AUTOCOMMIT_LLM_*` overrides outrank all of them.
 
-4. Backs up an existing config to `<config>.zcode-auto-commit.bak` and records
-   the previous `hooks.enabled` value in the agent's `install-state.json`.
-5. Refuses to install in both scopes unless `--force`; two installs would commit
-   twice per turn. For workbuddy bash resolution prefers the bundled
-   `CODEBUDDY_CODE_GIT_BASH_PATH`, then the usual Git installs.
+4. Backs up an existing config under `<agent asset dir>/backups/` (never next
+   to the config — a workspace `.bak` would not be gitignored and `git add -A`
+   could commit it) and records the previous `hooks.enabled` value in the
+   agent's `install-state.json`.
+5. Refuses to install when another merged config already registers the hook
+   (the opposite scope, or either Claude project settings file) unless
+   `--force`; two installs would commit twice per turn. For workbuddy bash
+   resolution prefers the bundled `CODEBUDDY_CODE_GIT_BASH_PATH`; for claude it
+   prefers `CLAUDE_CODE_GIT_BASH_PATH` (or `SHELL` when it points at bash).
+   Both then fall back to the usual Git installs.
 
 ## Verify
 
@@ -275,7 +284,8 @@ git -C /path/to/repo log -1
 `uninstall.cjs` removes only entries whose script is `auto-commit.sh`, preserves all
 other hooks, restores the `hooks.enabled` value recorded at install, and deletes the
 config file only if the installer created it and nothing else remains. `--purge`
-removes the copied scripts when no remaining config references them.
+removes the copied scripts and install state when no remaining config references
+them (the `backups/` directory is kept).
 
 ## Safety
 
@@ -297,14 +307,25 @@ removes the copied scripts when no remaining config references them.
   states.
 - Workspace config lives under `.zcode/`. If that directory is not ignored, the
   auto-commit hook will commit the config file itself.
+- Claude Code merges hooks from user settings, project `settings.json` and
+  project `settings.local.json`; every registered copy runs. Register the hook
+  in one file only — `install.cjs` refuses another merged file that already has
+  it, so do not also add it by hand to `settings.json`.
+- Claude Code's `disableAllHooks` / `allowManagedHooksOnly` (in any merged
+  settings file) stop the hook from running; `install.cjs` and `status.cjs`
+  warn when they see them. Project-level hooks also require workspace trust.
+- On Claude Code, `Stop` also fires on user interrupt, `/clear` and after
+  compaction, so those end-of-turn events can produce a checkpoint commit too.
 - The default scope is `user`, which applies to every project; use
   `--scope workspace` to limit the hook to a single repo.
 - Review `.gitignore` before enabling. The hook never commits ignored files.
 
 ## Troubleshooting
 
-- **Nothing commits**: run `status.cjs`. Confirm `hooks.enabled: true`, the configured
-  bash exists, and `git rev-parse` works under the current user. If git reports
+- **Nothing commits**: run `status.cjs`. Confirm the hook is installed, the
+  configured bash exists, and `git rev-parse` works under the current user. On
+  ZCode also confirm `hooks.enabled: true`; on Claude Code check workspace trust
+  and the `disableAllHooks` / `allowManagedHooksOnly` warnings. If git reports
   `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic message** (`chore: update N files`): the helper did not run, or no model
@@ -314,7 +335,10 @@ removes the copied scripts when no remaining config references them.
   user-set and never used for selection); its `api.type` decides request style and
   auth (`anthropic-messages` and `openai-chat-completions` both supported), and
   models are tried in the rule's `modelOrder` order.
-- **Double commits**: installed in both scopes; uninstall one.
+- **Double commits**: installed in both scopes; uninstall one. On Claude Code
+  also check both project files (`settings.json` and `settings.local.json`) —
+  every merged copy runs; remove an old one with
+  `--config .claude/settings.json`.
 - **Config parse error**: the installer refuses to edit invalid JSON. Fix the file or
   pass `--config <file>`.
 - **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
@@ -322,13 +346,17 @@ removes the copied scripts when no remaining config references them.
   agent-agnostic — pass `--config <path>` if the target uses ZCode's
   `hooks.events` schema, or extend `lib.cjs` with another branch (see
   "Adding a new agent" below for the checklist).
-- **Claude Code**: pass `--agent claude` (documented settings.json format).
+- **Claude Code**: pass `--agent claude` (workspace scope writes
+  `.claude/settings.local.json`; user scope writes `~/.claude/settings.json`).
   The commit-message model comes from the session's `ANTHROPIC_BASE_URL` +
   `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` and, in order, `ANTHROPIC_MODEL`,
   `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`,
   then the ids in `CLAUDE_CODE_MODEL_CAPABILITIES`; a saved `llm-config.json`
   or `AUTOCOMMIT_LLM_*` outranks them. Without any model source commits still
-  happen but with generic heuristic messages.
+  happen but with generic heuristic messages. If nothing commits, check that
+  the project is trusted, no merged settings file sets `disableAllHooks` /
+  `allowManagedHooksOnly` (`status.cjs` warns), and the registered bash path
+  still exists.
 - **Mixed agents**: the hook scripts detect their host at runtime (env-var
   prefixes), so the same install works under any supported host; `--agent` only
   selects where the hook is registered and in which format.
@@ -358,11 +386,12 @@ Steps:
    `AGENTS` (the `--agent` validation list) derives from it automatically.
 2. Only for a genuinely new hook JSON layout: add a writer to
    `HOOK_SCHEMA_WRITERS`. Covered families: `process-events` (zcode — nested
-   `hooks.events.<Event>[]`, process argv, `hooks.enabled`), `command-flat`
+   `hooks.events.<Event>[]`, process argv, `hooks.enabled`) and `command-flat`
    (workbuddy — flat `hooks.<Event>[]`, quoted command string, whole-second
-   timeout) and `command-flat-matcher` (claude — command-flat plus
-   `matcher`). `eventArrays`/`isOurHook`/`stripOurHooks` iterate both known
-   layouts, so same-family agents need nothing there.
+   timeout); `command-flat-claude` is the claude variant (same layout, plus
+   `statusMessage`, without the optional `matcher`).
+   `eventArrays`/`isOurHook`/`stripOurHooks` iterate both known layouts, so
+   same-family agents need nothing there.
 3. Only for a genuinely new commit-message model source: add the loader to
    `MODEL_SOURCES` in `hooks/auto-commit-msg.cjs` (the runtime mirror of
    `AGENT_PROFILES`), plus an alias if the agent shares an existing source.
