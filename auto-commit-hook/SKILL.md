@@ -2,7 +2,7 @@
 name: auto-commit-hook
 description: >-
   Install, uninstall, update, inspect, or troubleshoot the automatic git checkpoint
-  Stop hook (auto-commit) for ZCode/WorkBuddy/Claude Code workspaces. Use when the
+  Stop hook (auto-commit) for your agent workspaces. Use when the
   user asks to enable or disable auto-commit, install, remove, update or upgrade the
   Stop hook or the installed skill, set up per-turn git checkpoints, or diagnose why
   automatic commits are not happening.
