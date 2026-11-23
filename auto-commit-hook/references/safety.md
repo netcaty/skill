@@ -33,7 +33,7 @@ The full behaviour list behind the short summary in `SKILL.md`.
   in one file only — `install.cjs` refuses another merged file that already has
   it, so do not also add it by hand to `settings.json`.
 - Claude Code's `disableAllHooks` / `allowManagedHooksOnly` (in any merged
-  settings file) stop the hook from running; `install.cjs` and `status.cjs`
+  settings file) stop the hook from running; `install.cjs` and `status --doctor`
   warn when they see them. Project-level hooks also require workspace trust.
 - On Claude Code, `Stop` also fires on user interrupt, `/clear` and after
   compaction, so those end-of-turn events can produce a checkpoint commit too.

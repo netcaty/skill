@@ -3,7 +3,13 @@
 const path = require("path");
 const lib = require("./lib.cjs");
 
-function inspect(opts, scope) {
+// Default: report installation state only (installed/enabled/hook/scripts/last
+// run). Two opt-in extensions keep the other concerns separate:
+//   --doctor  environment blockers — bash path, Claude disable flags, git
+//             availability/ownership, both scopes installed
+//   --update  drift between the source checkout, the staged skill directory and
+//             the copied hook assets
+function inspect(opts, scope, doctor) {
   const local = Object.assign({}, opts, { scope, config: "" });
   const project = lib.projectDir(local);
   const cfgPath = lib.configPath(local);
@@ -18,16 +24,12 @@ function inspect(opts, scope) {
   const hook = lib.findOurHook(data);
   const count = lib.countOurHooks(data);
   const enabled = !!(data.hooks && typeof data.hooks === "object" && data.hooks.enabled === true);
-  // Claude Code merges user/project/local settings; a disable switch in any of
-  // them silently stops the hook from running.
-  const disabledBy = opts.agent === "claude" ? lib.claudeDisableFlags(project) : [];
-  const git = lib.gitCheck(project);
-  // WorkBuddy hooks carry the bash path inside the command string.
+  // WorkBuddy/Claude hooks carry the bash path inside the command string.
   const commandBash = hook && hook.type === "command"
     ? (/^"([^"]+)"/.exec(hook.command || "") || [])[1]
     : "";
   const bash = hook && hook.type === "process" ? hook.command : commandBash;
-  return {
+  const result = {
     agent: opts.agent,
     scope,
     project,
@@ -42,10 +44,15 @@ function inspect(opts, scope) {
     installExists: lib.isFile(installScript),
     bash,
     bashExists: bash ? lib.isFile(bash) : false,
-    disabledBy,
-    lastRun: lib.readLastRun(opts.agent),
-    git
+    lastRun: lib.readLastRun(opts.agent)
   };
+  if (doctor) {
+    // Claude Code merges user/project/local settings; a disable switch in any
+    // of them silently stops the hook from running.
+    result.disabledBy = opts.agent === "claude" ? lib.claudeDisableFlags(project) : [];
+    result.git = lib.gitCheck(project);
+  }
+  return result;
 }
 
 // Update check: is the staged skill directory (~/.agents/skills/...) behind
@@ -92,7 +99,7 @@ function printUpdate(update) {
     } else {
       console.log("  skill dir  : OUTDATED vs " + cmp.dir + " - " + driftSummary(cmp, "skill dir"));
       console.log("  fix        : run install.sh in the checkout (or re-run the curl" +
-        " one-liner), then node scripts/install.cjs");
+        " one-liner), then bash scripts/run.sh install");
     }
   } else if (update.source) {
     console.log("  skill dir  : this script runs from the source, nothing to compare");
@@ -104,12 +111,36 @@ function printUpdate(update) {
     console.log("  hook assets: up to date with the skill dir (" + cmp.dir + ")");
   } else {
     console.log("  hook assets: OUTDATED vs " + cmp.dir + " - " + driftSummary(cmp, "assets"));
-    console.log("  fix        : node scripts/install.cjs");
+    console.log("  fix        : bash scripts/run.sh install");
+  }
+}
+
+// A missing git, a repository that is not a work tree, and a repository owned
+// by another user all make the hook skip silently. Only the ownership case has
+// the safe.directory remedy; the others are expected states, not defects.
+function printGit(result) {
+  const git = result.git;
+  if (git.ok) {
+    console.log("  git    : ok");
+    return;
+  }
+  const detail = (git.detail || "git rev-parse failed").trim();
+  console.log("  git    : not usable - " + detail.split(/\r?\n/)[0]);
+  if (/dubious ownership/i.test(detail)) {
+    console.log("           fix: git config --global --add safe.directory " +
+      result.project.replace(/\\/g, "/"));
+  } else if (/not a git repository/i.test(detail)) {
+    console.log("           note: not a working tree; the hook skips turns here");
   }
 }
 
 function main() {
-  const opts = lib.parseArgs(process.argv.slice(2));
+  // --update and --doctor are status-only switches; keep them out of the
+  // shared parser so install/uninstall still reject them.
+  const argv = process.argv.slice(2);
+  const wantsUpdate = argv.includes("--update");
+  const wantsDoctor = argv.includes("--doctor");
+  const opts = lib.parseArgs(argv.filter(arg => arg !== "--update" && arg !== "--doctor"));
   if (opts.help) {
     console.log([
       "Usage: node status.cjs [options]",
@@ -120,20 +151,28 @@ function main() {
       "  --scope workspace|user   Config scope (default: user)",
       "  --project <dir>          Workspace root (default: CODEBUDDY_PROJECT_DIR /",
       "                           CLAUDE_PROJECT_DIR / ZCODE_PROJECT_DIR / cwd)",
-      "  --source <dir>           Skill checkout to compare against (default:",
+      "  --all                    Show user and workspace scopes",
+      "  --doctor                 Also check runtime blockers: bash path, Claude",
+      "                           disable flags, git availability/ownership,",
+      "                           duplicate scope installs",
+      "  --update                 Also compare the staged skill directory and the",
+      "                           copied hook assets with their source",
+      "  --source <dir>           Skill checkout for --update (default:",
       "                           AUTOCOMMIT_SOURCE_DIR, then the .source.json",
       "                           install.sh writes, then this script's own dir)",
-      "  --all                    Show user and workspace scopes",
       "  --json                   Machine-readable result"
     ].join("\n"));
     return;
   }
 
-  const update = updateInfo(opts);
   const results = opts.all
-    ? [inspect(opts, "workspace"), inspect(opts, "user")]
-    : [inspect(opts, opts.scope)];
-  for (const result of results) result.update = update;
+    ? [inspect(opts, "workspace", wantsDoctor), inspect(opts, "user", wantsDoctor)]
+    : [inspect(opts, opts.scope, wantsDoctor)];
+
+  if (wantsUpdate) {
+    const update = updateInfo(opts);
+    for (const result of results) result.update = update;
+  }
 
   if (opts.json) {
     console.log(JSON.stringify(opts.all ? results : results[0], null, 2));
@@ -160,13 +199,6 @@ function main() {
         console.log("  hook   : " + result.hook.command);
         console.log("  timeout: " + (result.hook.timeout || "default") + " s");
       }
-      if (!result.bashExists) {
-        console.log("  warning: the configured bash executable is missing");
-      }
-      for (const item of result.disabledBy || []) {
-        console.log("  warning: Claude Code ignores this hook while " +
-          item.flag + " is set in " + item.file);
-      }
     }
     console.log("  scripts: " + (result.installExists ? "present" : "missing") +
       " (" + result.installDir + ")");
@@ -178,20 +210,29 @@ function main() {
     } else if (result.lastRun) {
       console.log("  last run: ok " + (result.lastRun.at || ""));
     }
-    console.log("  git    : " + (result.git.ok ? "ok" : "not available - " + result.git.detail.split(/\r?\n/)[0]));
-    if (!result.git.ok) {
-      console.log("           fix: git config --global --add safe.directory " +
-        result.project.replace(/\\/g, "/"));
+    if (wantsDoctor) {
+      if (!result.bashExists) {
+        console.log("  warning: the configured bash executable is missing");
+      }
+      for (const item of result.disabledBy || []) {
+        console.log("  warning: Claude Code ignores this hook while " +
+          item.flag + " is set in " + item.file);
+      }
+      printGit(result);
     }
   }
 
-  console.log("");
-  printUpdate(update);
-
-  const installed = results.filter(result => result.installed);
-  if (installed.length > 1) {
+  if (wantsUpdate) {
     console.log("");
-    console.log("Warning: the hook is installed in both scopes; every turn will commit twice.");
+    printUpdate(results[0].update);
+  }
+
+  if (wantsDoctor) {
+    const installed = results.filter(result => result.installed);
+    if (installed.length > 1) {
+      console.log("");
+      console.log("Warning: the hook is installed in both scopes; every turn will commit twice.");
+    }
   }
 }
 

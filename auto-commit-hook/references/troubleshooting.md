@@ -10,7 +10,7 @@ of band instead of aborting:
   `auto-commit.log` in the agent's asset directory. The log is created lazily
   on the first failure; a successful commit only overwrites `last-run.json`
   with `status: "ok"`, so a healthy install usually has no log file.
-- `status.cjs` prints that state: `last run: FAILED <time> (<stage>) <detail>`
+- `status` prints that state: `last run: FAILED <time> (<stage>) <detail>`
   plus the log path; `--json` exposes the same object as `lastRun`.
 - Claude Code additionally receives a non-blocking stdout payload
   `{"systemMessage":"⚠ auto-commit failed (...)","suppressOutput":true}`, which
@@ -48,12 +48,11 @@ git -C /path/to/repo log -1
 
 ## Troubleshooting
 
-- **Nothing commits**: run `status.cjs`; a `last run: FAILED ...` line names the
-  failing stage and the log path. Confirm the hook is installed, the configured
-  bash exists, and `git rev-parse` works under the current user. On ZCode also
-  confirm `hooks.enabled: true`; on Claude Code check workspace trust and the
-  `disableAllHooks` / `allowManagedHooksOnly` warnings. If git reports
-  `dubious ownership`, run:
+- **Nothing commits**: run `status --doctor`; it reports the configured bash,
+  Claude `disableAllHooks` / `allowManagedHooksOnly`, and whether git can use
+  the project. A `last run: FAILED ...` line names the failing stage and the log
+  path. On ZCode also confirm `hooks.enabled: true`; on Claude Code check
+  workspace trust. If git reports `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic message** (`chore: update N files`): the helper did not run, or no model
   provider is configured. Check the Node/Electron runtime and the provider config
@@ -82,8 +81,8 @@ git -C /path/to/repo log -1
   or `AUTOCOMMIT_LLM_*` outranks them. Without any model source commits still
   happen but with generic heuristic messages. If nothing commits, check that
   the project is trusted, no merged settings file sets `disableAllHooks` /
-  `allowManagedHooksOnly` (`status.cjs` warns), and the registered bash path
-  still exists.
+  `allowManagedHooksOnly` (`status --doctor` reports them), and the registered
+  bash path still exists.
 - **Mixed agents**: the hook scripts detect their host at runtime (env-var
   prefixes), so the same install works under any supported host; `--agent` only
   selects where the hook is registered and in which format.

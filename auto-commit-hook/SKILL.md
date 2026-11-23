@@ -93,6 +93,8 @@ bash scripts/run.sh install --dry-run
 # Inspect
 bash scripts/run.sh status
 bash scripts/run.sh status --agent workbuddy --all --json
+bash scripts/run.sh status --doctor          # blockers: bash, git, disable flags, duplicate scopes
+bash scripts/run.sh status --update          # drift vs the source checkout
 
 # Uninstall (keep the copied scripts)
 bash scripts/run.sh uninstall
@@ -114,19 +116,19 @@ The installed copies live in two places that go stale independently:
 `~/.agents/skills/auto-commit-hook/` (staged by `install.sh`; the
 `~/.claude/skills` and `~/.workbuddy/skills` links follow it) and the hook
 assets `~/.claude/hooks/auto-commit/`, `~/.workbuddy/hooks/auto-commit/` or
-`~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status.cjs` hashes
-the installed files and reports drift in its `update` section (`--json` adds
-an `update` object to every result):
+`~/.zcode/hooks/auto-commit/` (copied by `install.cjs`). `status --update`
+hashes the installed files and reports drift in its `update` section (`--json`
+adds an `update` object to every result):
 
 ```bash
-bash scripts/run.sh status
-bash scripts/run.sh status --source /path/to/skill-checkout   # when no .source.json
+bash scripts/run.sh status --update
+bash scripts/run.sh status --update --source /path/to/skill-checkout   # when no .source.json
 ```
 
 The source checkout is remembered in
 `~/.agents/skills/auto-commit-hook/.source.json` (written by `install.sh` —
 local mode records the checkout path, download mode the repo URL), so
-`status.cjs` usually finds it without `--source`. When no local checkout is
+`status --update` usually finds it without `--source`. When no local checkout is
 recorded, the skill-dir comparison is skipped and the agent falls back to the
 download update below.
 
@@ -139,7 +141,8 @@ config is untouched):
    links (`~/.claude/skills`, `~/.workbuddy/skills`), which point at the staged
    copy.
 2. Refresh the hook assets: `bash scripts/run.sh install`.
-3. Re-run `bash scripts/run.sh status` and expect `up to date` on both lines.
+3. Re-run `bash scripts/run.sh status --update` and expect `up to date` on both
+   lines.
 
 Hook assets take effect on the next Stop event (the hook re-reads its scripts
 every turn); updated `SKILL.md`, `references/` and `scripts/` apply to new
@@ -159,15 +162,16 @@ removes it. When the user types them:
 - `禁用 hook`: run `bash scripts/run.sh status` first, then uninstall every
   installed scope (`bash scripts/run.sh uninstall`, plus `--scope workspace`
   where needed). Keep the copied scripts unless the user asks for `--purge`.
-- `更新 hook` (or `更新 skill`): run `bash scripts/run.sh status` first — its
-  `update` section names the stale files. Then refresh the skill directory
+- `更新 hook` (or `更新 skill`): run `bash scripts/run.sh status --update` first
+  — its `update` section names the stale files. Then refresh the skill directory
   (checkout: `bash install.sh` there; no checkout: re-run the curl one-liner),
-  run `bash scripts/run.sh install`, and re-run `status` to verify. Say that
-  hook assets apply immediately while SKILL.md changes need a new session.
+  run `bash scripts/run.sh install`, and re-run `status --update` to verify. Say
+  that hook assets apply immediately while SKILL.md changes need a new session.
 - `查看 hook 状态`: run `bash scripts/run.sh status --all` (add `--json` when the
-  result is parsed programmatically). Report installed/enabled per scope and
-  the `update` section — outdated files mean an update is available (see
-  `更新 hook` above). A `last run: ok` line is healthy; `last run: FAILED
+  result is parsed programmatically). Report installed/enabled per scope. Add
+  `--update` when the user also asks about outdated files, and `--doctor` for
+  blockers (missing bash, Claude disable flags, git ownership, both scopes
+  installed). A `last run: ok` line is healthy; `last run: FAILED
   <time> (<stage>)` names the failing step and the log path under the install
   directory, so quote it back to the user and suggest the fix.
 - `设置 LLM 配置[: url=... key=... model=...]`: run
@@ -185,8 +189,9 @@ bash scripts/run.sh status --scope workspace
 
 Expect `installed` and `scripts: present`, and after a turn `last run: ok ...`.
 `enabled: true` appears for ZCode only (command-string agents report
-`enabled: (n/a for command hooks)`), and `git: ok` only when the command runs
-inside a git repository (see the workspace-scope note above). A
+`enabled: (n/a for command hooks)`). Add `--doctor` to check the configured
+bash, Claude disable flags, git usability (a `safe.directory` fix is suggested
+only for the ownership case), and duplicate scope installs. A
 `last run: FAILED ...` line names the failing stage and the log path; see
 [troubleshooting](references/troubleshooting.md), which also shows how to run
 the installed hook by hand.
