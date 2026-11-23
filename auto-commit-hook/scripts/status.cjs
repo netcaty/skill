@@ -134,6 +134,49 @@ function printGit(result) {
   }
 }
 
+// The "ai" record written by the hook explains how the commit message was
+// produced. "unavailable" and "error" are diagnostics, not failed commits:
+// the top-level lastRun.status stays ok whenever the commit itself succeeded.
+function oneLine(value, max) {
+  const text = String(value == null ? "" : value)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > max ? text.slice(0, max - 1) + "…" : text;
+}
+
+function printAi(ai) {
+  if (!ai || typeof ai !== "object") return;
+  const status = String(ai.status || "?");
+  const detail = [];
+  if (ai.source) detail.push(oneLine(ai.source, 40));
+  else if (ai.agent) detail.push("agent " + oneLine(ai.agent, 40));
+  if (ai.model) detail.push(oneLine(ai.model, 60));
+  if (typeof ai.ms === "number") detail.push(ai.ms + " ms");
+  const suffix = detail.length ? " (" + detail.join(", ") + ")" : "";
+  if (status === "ok") {
+    console.log("  ai     : ok" + suffix);
+    return;
+  }
+  const label = status === "error" ? "FAILED" : status;
+  const reason = ai.reason ? " - " + oneLine(ai.reason, 200) : "";
+  console.log("  ai     : " + label + reason + suffix);
+  for (const item of (Array.isArray(ai.checked) ? ai.checked : []).slice(0, 5)) {
+    if (!item || typeof item !== "object") continue;
+    console.log("           " + (item.source ? oneLine(item.source, 40) + ": " : "") +
+      oneLine(item.reason || "unavailable", 200));
+  }
+  if (status !== "error") return;
+  for (const attempt of (Array.isArray(ai.attempts) ? ai.attempts : []).slice(0, 6)) {
+    if (!attempt || typeof attempt !== "object") continue;
+    const parts = [];
+    if (attempt.model) parts.push(oneLine(attempt.model, 60) + ":");
+    parts.push(oneLine(attempt.error || "ok", 200));
+    if (typeof attempt.ms === "number") parts.push("(" + attempt.ms + " ms)");
+    console.log("           " + parts.join(" "));
+  }
+}
+
 function main() {
   // --update and --doctor are status-only switches; keep them out of the
   // shared parser so install/uninstall still reject them.
@@ -210,6 +253,7 @@ function main() {
     } else if (result.lastRun) {
       console.log("  last run: ok " + (result.lastRun.at || ""));
     }
+    if (result.lastRun) printAi(result.lastRun.ai);
     if (wantsDoctor) {
       if (!result.bashExists) {
         console.log("  warning: the configured bash executable is missing");

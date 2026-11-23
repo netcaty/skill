@@ -85,7 +85,10 @@ are in `SKILL.md`; this file is the reference for config locations and formats.
    `ANTHROPIC_MODEL`, then `ANTHROPIC_SMALL_FAST_MODEL` /
    `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`, then the ids listed in
    `CLAUDE_CODE_MODEL_CAPABILITIES`; the saved `llm-config.json` and
-   `AUTOCOMMIT_LLM_*` overrides outrank all of them.
+   `AUTOCOMMIT_LLM_*` overrides outrank all of them. How the message was
+   produced — including why no model was used or which model calls failed — is
+   recorded under `ai` in `last-run.json`; see
+   [troubleshooting](troubleshooting.md).
 4. Backs up an existing config under `<agent asset dir>/backups/` (never next
    to the config — a workspace `.bak` would not be gitignored and `git add -A`
    could commit it) and records the previous `hooks.enabled` value in the

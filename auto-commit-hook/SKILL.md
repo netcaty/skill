@@ -17,7 +17,8 @@ The hook is a pair of scripts bundled under `hooks/`:
 - `auto-commit.sh` — guards, stages changes, commits, records the outcome, and
   always exits 0
 - `auto-commit-msg.cjs` — turns the agent's final reply into a Conventional Commits
-  subject/body; uses the provider config when available and local heuristics otherwise
+  subject/body; uses the provider config when available and local heuristics
+  otherwise, recording the attempt under `ai` in `last-run.json`
 
 ## One-line install
 
@@ -173,7 +174,10 @@ removes it. When the user types them:
   blockers (missing bash, Claude disable flags, git ownership, both scopes
   installed). A `last run: ok` line is healthy; `last run: FAILED
   <time> (<stage>)` names the failing step and the log path under the install
-  directory, so quote it back to the user and suggest the fix.
+  directory, so quote it back to the user and suggest the fix. The `ai:` line
+  explains a heuristic commit message — `disabled`, `skipped`, `unavailable`
+  (checked sources) or `error` (per-model failures) — and is diagnostics only,
+  not a failed commit.
 - `设置 LLM 配置[: url=... key=... model=...]`: run
   `bash scripts/run.sh setup-llm --url <url> --key <key> [--model <id[,id...]>]`;
   ask for any missing values first. After saving, confirm with `--show`
@@ -188,6 +192,8 @@ bash scripts/run.sh status --scope workspace
 ```
 
 Expect `installed` and `scripts: present`, and after a turn `last run: ok ...`.
+The companion `ai:` line says how the message was produced (an `unavailable`
+or `error` value explains a heuristic-only message without failing the run).
 `enabled: true` appears for ZCode only (command-string agents report
 `enabled: (n/a for command hooks)`). Add `--doctor` to check the configured
 bash, Claude disable flags, git usability (a `safe.directory` fix is suggested

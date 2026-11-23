@@ -14,6 +14,13 @@
 //                                     paths the model flagged as containing
 //                                     sensitive content (written only if any;
 //                                     auto-commit.sh unstages them)
+//         AI_STATUS_OUT                output file: compact JSON describing how
+//                                     the commit message was produced (status
+//                                     ok | disabled | skipped | unavailable |
+//                                     error, provider source, model, timings,
+//                                     checked sources or per-model errors);
+//                                     auto-commit.sh embeds it verbatim as the
+//                                     "ai" field of last-run.json
 //         AUTOCOMMIT_AGENT             agent type from auto-commit.sh (zcode |
 //                                     workbuddy | codebuddy:* | claude |
 //                                     unknown); selects the model source below
@@ -217,6 +224,97 @@ function writeSensitive(files) {
   try { fs.writeFileSync(out, files.join("\n") + "\n", "utf8"); } catch {}
 }
 
+// --- AI diagnostics ---------------------------------------------------------
+// AI_STATUS_OUT receives one compact JSON object describing how the commit
+// message was produced. auto-commit.sh embeds it as the "ai" field of
+// last-run.json and status.cjs prints it. Keep it free of secrets: only
+// identities, endpoints (query stripped), timings and error messages go in;
+// never API keys, tokens or the model's response text.
+let aiStatusWritten = false;
+
+// Single-line, bounded, secret-scrubbed text for the diagnostic record.
+function clip(value, max) {
+  const text = String(value == null ? "" : value)
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "sk-…")
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, "$1…")
+    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, "…")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const chars = Array.from(text);
+  return chars.length > max ? chars.slice(0, max).join("") + "…" : text;
+}
+
+// Endpoints can carry credentials in userinfo or a query string; record only
+// origin + path.
+function safeUrl(value) {
+  const raw = String(value || "");
+  try {
+    const u = new URL(raw);
+    return u.origin + u.pathname;
+  } catch {
+    return raw.replace(/[?#].*$/, "");
+  }
+}
+
+function writeAiStatus(obj) {
+  aiStatusWritten = true;
+  const out = process.env.AI_STATUS_OUT;
+  if (!out) return;
+  let json;
+  try { json = JSON.stringify(obj); } catch { return; }
+  if (json.length > 4000) {
+    json = JSON.stringify({ status: obj.status, reason: "diagnostic record omitted (too large)" });
+  }
+  try { fs.writeFileSync(out, json + "\n", "utf8"); } catch {}
+}
+
+function addNote(notes, source, reason) {
+  if (Array.isArray(notes)) notes.push({ source, reason: clip(reason, 200) });
+}
+
+function describeFetchError(err, timeoutMs) {
+  const cause = err && err.cause;
+  const text = String((err && (err.message || err.name)) ||
+    (cause && cause.message) || "request failed");
+  const aborted = (err && err.name === "AbortError") ||
+    /\babort(?:ed)?\b/i.test(text) ||
+    !!(cause && /\babort(?:ed)?\b/i.test(String(cause.message || "")));
+  if (aborted) return "timeout after " + timeoutMs + " ms";
+  let msg = text;
+  if (cause) {
+    const bits = [];
+    if (cause.code) bits.push(String(cause.code));
+    if (cause.message && cause.message !== msg) bits.push(String(cause.message));
+    if (bits.length) msg += " (" + bits.join(": ") + ")";
+  }
+  return clip(msg, 200);
+}
+
+async function httpErrorDetail(res) {
+  let detail = "";
+  try {
+    const body = (await res.text()).trim();
+    if (body) {
+      try {
+        const parsed = JSON.parse(body);
+        const err = parsed && (parsed.error || parsed);
+        detail = (err && typeof err === "object" && (err.message || err.type)) ||
+          (typeof err === "string" ? err : "") || body;
+      } catch {
+        detail = body;
+      }
+    }
+  } catch {}
+  detail = clip(detail, 200);
+  return "HTTP " + res.status + (res.statusText ? " " + res.statusText : "") +
+    (detail ? ": " + detail : "");
+}
+
+function pushAttempt(attempts, attempt) {
+  if (attempts.length < 12) attempts.push(attempt);
+}
+
 function inferTypeFromFiles() {
   const files = changedFiles();
   const all = re => files.length > 0 && files.every(p => re.test(p));
@@ -242,16 +340,26 @@ function localDraft(text) {
   return { type, subject: line, body: [] };
 }
 
-function loadZcodeProvider() {
-  if (process.env.AUTOCOMMIT_NO_AI === "1") return null;
+function loadZcodeProvider(notes) {
+  if (process.env.AUTOCOMMIT_NO_AI === "1") {
+    addNote(notes, "zcode", "AUTOCOMMIT_NO_AI=1");
+    return null;
+  }
   // The session's own provider config: ZCode injects its path into the hook
   // environment, so the hook follows whatever provider the session runs on.
   const file = process.env.AUTOCOMMIT_PROVIDER_CONFIG ||
     process.env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE ||
     path.join(os.homedir(), ".zcode", "v2", "provider_config.json");
   let cfg;
-  try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }  const rules = cfg && cfg.config && cfg.config.providerConfigRules && cfg.config.providerConfigRules.providerRules;
-  if (!Array.isArray(rules)) return null;
+  try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {
+    addNote(notes, "zcode", "provider config not readable: " + file);
+    return null;
+  }
+  const rules = cfg && cfg.config && cfg.config.providerConfigRules && cfg.config.providerConfigRules.providerRules;
+  if (!Array.isArray(rules)) {
+    addNote(notes, "zcode", "provider config has no providerRules: " + file);
+    return null;
+  }
   const apiOf = r => (r && r.config && r.config.api) || {};
   const usable = r => r && apiOf(r).baseUrl &&
     (process.env.AUTOCOMMIT_LLM_KEY || (r.config.access && r.config.access.apiKey));
@@ -260,10 +368,16 @@ function loadZcodeProvider() {
   // the first usable rule in file order wins, the rule's api.type decides
   // request style and auth, and models are tried in its modelOrder order.
   const rule = rules.find(usable);
-  if (!rule) return null;
+  if (!rule) {
+    addNote(notes, "zcode", "no rule with baseUrl and access.apiKey in " + file);
+    return null;
+  }
   const api = apiOf(rule);
   const key = process.env.AUTOCOMMIT_LLM_KEY || (rule.config.access && rule.config.access.apiKey);
-  if (!key || !api.baseUrl) return null;
+  if (!key || !api.baseUrl) {
+    addNote(notes, "zcode", "selected provider rule has no baseUrl or API key");
+    return null;
+  }
 
   const override = process.env.AUTOCOMMIT_LLM_URL;
   let url;
@@ -296,11 +410,19 @@ function loadZcodeProvider() {
 // There is no config file and no user API key, so this works out of the box.
 // The proxy only speaks SSE (non-stream requests are rejected with 11101) and
 // it accepts any model id the account can use.
-function loadWorkbuddyProvider() {
+function loadWorkbuddyProvider(notes) {
   const url = process.env.WORKBUDDY_VLM_CHAT_URL;
   const token = process.env.WORKBUDDY_VLM_AUTH_TOKEN;
   const context = process.env.WORKBUDDY_VLM_CONTEXT;
-  if (!url || !token || !context) return null;
+  if (!url || !token || !context) {
+    const missing = [
+      ["WORKBUDDY_VLM_CHAT_URL", url],
+      ["WORKBUDDY_VLM_AUTH_TOKEN", token],
+      ["WORKBUDDY_VLM_CONTEXT", context]
+    ].filter(([, value]) => !value).map(([name]) => name);
+    addNote(notes, "workbuddy", missing.join(", ") + " not set");
+    return null;
+  }
 
   const override = process.env.AUTOCOMMIT_LLM_MODEL;
   const candidates = override
@@ -310,7 +432,11 @@ function loadWorkbuddyProvider() {
   const models = candidates
     .map(m => (typeof m === "string" ? m.trim() : ""))
     .filter(m => m && !seen.has(m) && seen.add(m));
-  if (!models.length) return null;
+  if (!models.length) {
+    addNote(notes, "workbuddy",
+      "no model id (AUTOCOMMIT_LLM_MODEL / CODEBUDDY_CURRENT_MODEL_ID / WORKBUDDY_VLM_MODEL)");
+    return null;
+  }
   return { kind: "workbuddy", url, token, context, models };
 }
 
@@ -346,11 +472,17 @@ function claudeModelCandidates(override) {
 // request style is the same /v1/messages call the zcode-anthropic path uses.
 // An explicit AUTOCOMMIT_LLM_URL/_KEY override follows the llm-config.json
 // contract instead (URL used verbatim, request style from its shape).
-function loadClaudeProvider() {
+function loadClaudeProvider(notes) {
   const key = process.env.AUTOCOMMIT_LLM_KEY ||
     process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
   const base = process.env.AUTOCOMMIT_LLM_URL || process.env.ANTHROPIC_BASE_URL;
-  if (!key || !base) return null;
+  if (!key || !base) {
+    const missing = [];
+    if (!base) missing.push("ANTHROPIC_BASE_URL/AUTOCOMMIT_LLM_URL");
+    if (!key) missing.push("ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY");
+    addNote(notes, "claude", missing.join(" and ") + " not set");
+    return null;
+  }
   let url;
   let kind;
   if (process.env.AUTOCOMMIT_LLM_URL) {
@@ -362,7 +494,11 @@ function loadClaudeProvider() {
     kind = "zcode-anthropic";
   }
   const candidates = claudeModelCandidates(process.env.AUTOCOMMIT_LLM_MODEL);
-  if (!candidates.length) return null;
+  if (!candidates.length) {
+    addNote(notes, "claude",
+      "no model candidate from ANTHROPIC_MODEL / ANTHROPIC_SMALL_FAST_MODEL / ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_MODEL_CAPABILITIES");
+    return null;
+  }
   return { url, key, models: candidates, kind };
 }
 
@@ -370,17 +506,31 @@ function loadClaudeProvider() {
 // explicit user choice, so it outranks the session-derived providers; the
 // AUTOCOMMIT_LLM_* env overrides (test escape hatch) still win on top of it.
 // Request style follows the URL shape: .../v1/messages -> anthropic.
-function loadManualProvider() {
+function loadManualProvider(notes) {
   const file = process.env.AUTOCOMMIT_LLM_CONFIG ||
     path.join(os.homedir(), ".agents", "skills", "auto-commit-hook", "llm-config.json");
+  let raw;
+  try { raw = fs.readFileSync(file, "utf8"); } catch {
+    addNote(notes, "manual", "no readable llm-config.json: " + file);
+    return null;
+  }
   let cfg;
-  try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
-  if (!cfg || typeof cfg !== "object") return null;
+  try { cfg = JSON.parse(raw); } catch {
+    addNote(notes, "manual", "llm-config.json is not valid JSON: " + file);
+    return null;
+  }
+  if (!cfg || typeof cfg !== "object") {
+    addNote(notes, "manual", "llm-config.json is not an object: " + file);
+    return null;
+  }
   const url = String(cfg.url || "").trim();
   const key = String(cfg.key || "").trim();
   const models = (Array.isArray(cfg.model) ? cfg.model : String(cfg.model || "").split(","))
     .map(s => String(s).trim()).filter(Boolean);
-  if (!url || !key || !models.length) return null;
+  if (!url || !key || !models.length) {
+    addNote(notes, "manual", "llm-config.json is missing url, key or model: " + file);
+    return null;
+  }
   const kind = /\/messages(\/?)$/i.test(url) ? "zcode-anthropic" : undefined;
   return { url, key, models, kind };
 }
@@ -404,11 +554,12 @@ const UNKNOWN_SOURCE_ORDER = ["claude", "workbuddy", "zcode"];
 // detected agent (WorkBuddy's loopback proxy from the hook environment,
 // ZCode's provider config from disk, Claude Code's ANTHROPIC_* environment).
 // AUTOCOMMIT_LLM_* env overrides win over everything.
-function loadProvider() {
-  const manual = loadManualProvider();
+function loadProvider(notes) {
+  const manual = loadManualProvider(notes);
   if (manual) {
     return {
       ...manual,
+      source: "manual",
       url: process.env.AUTOCOMMIT_LLM_URL || manual.url,
       key: process.env.AUTOCOMMIT_LLM_KEY || manual.key,
       models: process.env.AUTOCOMMIT_LLM_MODEL
@@ -419,11 +570,14 @@ function loadProvider() {
   const agent = String(process.env.AUTOCOMMIT_AGENT || "").toLowerCase();
   const base = agent.split(":")[0];
   const key = MODEL_SOURCES[agent] ? agent : MODEL_SOURCE_ALIASES[base];
-  if (key && MODEL_SOURCES[key]) return MODEL_SOURCES[key]();
+  if (key && MODEL_SOURCES[key]) {
+    const provider = MODEL_SOURCES[key](notes);
+    return provider ? { ...provider, source: key } : null;
+  }
   // Unknown host or manual run: use whichever source is actually available.
   for (const name of UNKNOWN_SOURCE_ORDER) {
-    const provider = MODEL_SOURCES[name]();
-    if (provider) return provider;
+    const provider = MODEL_SOURCES[name](notes);
+    if (provider) return { ...provider, source: name };
   }
   return null;
 }
@@ -495,9 +649,25 @@ function validate(obj, fallback) {
 }
 
 async function aiDraft(text, fallback) {
-  if (process.env.AUTOCOMMIT_NO_AI === "1" || !text.trim()) return null;
-  const provider = loadProvider();
-  if (!provider) return null;
+  if (process.env.AUTOCOMMIT_NO_AI === "1") {
+    writeAiStatus({ status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" });
+    return null;
+  }
+  if (!text.trim()) {
+    writeAiStatus({ status: "skipped", reason: "empty agent final message" });
+    return null;
+  }
+  const notes = [];
+  const provider = loadProvider(notes);
+  if (!provider) {
+    writeAiStatus({
+      status: "unavailable",
+      reason: "no model provider configured",
+      agent: String(process.env.AUTOCOMMIT_AGENT || "unknown"),
+      checked: notes
+    });
+    return null;
+  }
 
   const clipped = Array.from(text).slice(0, 12000).join("");
   const diff = readDiff();
@@ -534,14 +704,19 @@ async function aiDraft(text, fallback) {
 
   const perAttemptMs = Number(process.env.AUTOCOMMIT_AI_TIMEOUT_MS || 8000);
   const totalMs = Number(process.env.AUTOCOMMIT_AI_TOTAL_MS || 13000);
-  const deadline = Date.now() + totalMs;
+  const started = Date.now();
+  const deadline = started + totalMs;
   const tried = new Set();
+  const attempts = [];
+  let budgetStopped = false;
 
   for (const model of provider.models) {
     if (!model || tried.has(model)) continue;
     tried.add(model);
     const budget = deadline - Date.now();
-    if (budget < 1000) return null;
+    if (budget < 1000) { budgetStopped = true; break; }
+    const attempt = { model };
+    const attemptStart = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(perAttemptMs, budget));
     try {
@@ -583,28 +758,58 @@ async function aiDraft(text, fallback) {
         body: JSON.stringify(body),
         signal: controller.signal
       });
-      if (!res.ok) continue;
-      const content = streaming
-        ? await readSseText(res)
-        : anthropic
-          ? ((data => Array.isArray(data && data.content)
-              ? data.content.filter(b => b && b.type === "text" && typeof b.text === "string").map(b => b.text).join("")
-              : "")(await res.json()))
-          : ((data => data && data.choices && data.choices[0] &&
-              data.choices[0].message && data.choices[0].message.content)(await res.json()));
-      if (typeof content !== "string" || !content.trim()) continue;
-      const parsed = parseModelJson(content);
-      const draft = validate(parsed, fallback);
-      if (draft) {
-        writeSensitive(collectSensitive(parsed));
-        return draft;
+      if (!res.ok) {
+        attempt.error = await httpErrorDetail(res);
+      } else {
+        const content = streaming
+          ? await readSseText(res)
+          : anthropic
+            ? ((data => Array.isArray(data && data.content)
+                ? data.content.filter(b => b && b.type === "text" && typeof b.text === "string").map(b => b.text).join("")
+                : "")(await res.json()))
+            : ((data => data && data.choices && data.choices[0] &&
+                data.choices[0].message && data.choices[0].message.content)(await res.json()));
+        if (typeof content !== "string" || !content.trim()) {
+          attempt.error = "empty response";
+        } else {
+          const parsed = parseModelJson(content);
+          const draft = validate(parsed, fallback);
+          if (draft) {
+            attempt.ms = Date.now() - attemptStart;
+            pushAttempt(attempts, attempt);
+            writeSensitive(collectSensitive(parsed));
+            writeAiStatus({
+              status: "ok",
+              source: provider.source,
+              url: safeUrl(provider.url),
+              model,
+              ms: Date.now() - started,
+              attempts
+            });
+            return draft;
+          }
+          attempt.error = "response was not usable commit JSON";
+        }
       }
-    } catch {
-      // fall through and try the next model
+    } catch (err) {
+      attempt.error = describeFetchError(err, Math.min(perAttemptMs, budget));
     } finally {
       clearTimeout(timer);
     }
+    attempt.ms = Date.now() - attemptStart;
+    pushAttempt(attempts, attempt);
   }
+
+  writeAiStatus({
+    status: "error",
+    reason: budgetStopped
+      ? "total time budget exhausted (AUTOCOMMIT_AI_TOTAL_MS)"
+      : attempts.length ? "every model attempt failed" : "no model configured",
+    source: provider.source,
+    url: safeUrl(provider.url),
+    ms: Date.now() - started,
+    attempts
+  });
   return null;
 }
 
@@ -633,8 +838,16 @@ async function main() {
 
 if (require.main === module) {
   // Never fail the hook: any unexpected error falls back to the shell's
-  // generic subject.
-  main().catch(() => {});
+  // generic subject. The failure itself still goes into the AI status record
+  // so last-run.json can explain why the message is heuristic.
+  main().catch(err => {
+    if (!aiStatusWritten) {
+      writeAiStatus({
+        status: "error",
+        reason: "message helper crashed: " + clip((err && err.message) || err, 200)
+      });
+    }
+  });
 }
 
 module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, claudeModelCandidates, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };

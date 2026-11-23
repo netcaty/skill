@@ -19,8 +19,12 @@ of band instead of aborting:
   same JSON channel for testing.
 - Expected skips — not a repository, clean tree, merge/rebase in progress,
   detached HEAD — are not failures and are never reported. A missing model
-  also falls back to the generic `chore: update N files` by design and is not
-  reported as a failure.
+  also falls back to local heuristics by design and is not a failure, but the
+  attempt is recorded in `last-run.json` under `ai`: `ok` (source, model,
+  duration), `disabled` (`AUTOCOMMIT_NO_AI=1`), `skipped` (empty agent reply),
+  `unavailable` (the provider sources checked and why each was empty), or
+  `error` (each model's HTTP/network/timeout failure). `status` prints it as
+  an `ai:` line. Only the message is heuristic; the commit itself succeeds.
 - If a sensitive file cannot be unstaged, the hook aborts the commit, unstages
   everything, and reports stage `sensitive gate` instead of risking a leak.
 
@@ -54,8 +58,13 @@ git -C /path/to/repo log -1
   path. On ZCode also confirm `hooks.enabled: true`; on Claude Code check
   workspace trust. If git reports `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
-- **Generic message** (`chore: update N files`): the helper did not run, or no model
-  provider is configured. Check the Node/Electron runtime and the provider config
+- **Generic or subject-only message**: the helper fell back to local heuristics
+  (`chore: update N files` when it produced no usable subject) or did not run.
+  `status` prints an `ai:` line: `disabled` means `AUTOCOMMIT_NO_AI=1`,
+  `skipped` means the Stop payload had no final message, `unavailable` lists
+  every provider source checked and why it was empty, and `error` lists each
+  model's HTTP/network/timeout failure. `last-run.json` has the same object
+  under `ai`. For the ZCode source, also check the provider config
   (`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE`, default `~/.zcode/v2/provider_config.json`):
   the first rule with a `baseUrl` and an `access.apiKey` wins (`providerId` is
   user-set and never used for selection); its `api.type` decides request style and
@@ -79,7 +88,8 @@ git -C /path/to/repo log -1
   `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`,
   then the ids in `CLAUDE_CODE_MODEL_CAPABILITIES`; a saved `llm-config.json`
   or `AUTOCOMMIT_LLM_*` outranks them. Without any model source commits still
-  happen but with generic heuristic messages. If nothing commits, check that
+  happen but with heuristic messages; the `ai:` line names the sources that
+  were checked. If nothing commits, check that
   the project is trusted, no merged settings file sets `disableAllHooks` /
   `allowManagedHooksOnly` (`status --doctor` reports them), and the registered
   bash path still exists.

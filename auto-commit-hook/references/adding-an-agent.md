@@ -32,7 +32,10 @@ Steps:
 3. Only for a genuinely new commit-message model source: add the loader to
    `MODEL_SOURCES` in `hooks/auto-commit-msg.cjs` (the runtime mirror of
    `AGENT_PROFILES`), plus an alias if the agent shares an existing source.
-   No source means the local-heuristic fallback still commits.
+   A loader receives an optional `notes` array; call `addNote(notes, source,
+   reason)` before every `return null` so `last-run.json`'s `ai.checked`
+   explains why the source was unavailable. No source means the
+   local-heuristic fallback still commits (also recorded under `ai`).
 4. Optionally add a marker row to the detection table in
    `hooks/auto-commit.sh` (the bash mirror of the registry). Without it the
    agent still works as `unknown` — the cd chain, runtime fallback and

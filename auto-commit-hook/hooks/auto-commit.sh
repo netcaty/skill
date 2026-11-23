@@ -15,7 +15,11 @@
 # Failures: the hook always exits 0, but real failures (git add/commit, the
 # sensitive gate, missing git) update last-run.json and append to a lazily
 # created, bounded auto-commit.log under the state directory, and status.cjs
-# prints the last outcome. Claude Code also gets a non-blocking systemMessage
+# prints the last outcome. The commit-message model attempt is recorded in
+# last-run.json under "ai" even when the commit succeeds: ok (source/model/ms),
+# disabled, skipped, unavailable (with the checked provider sources) or error
+# (with each model's failure), so a heuristic message is explainable.
+# Claude Code also gets a non-blocking systemMessage
 # JSON on stdout; AUTOCOMMIT_NOTIFY_STDOUT=1/0 forces that channel on/off for
 # other hosts.
 # Nothing else is written to stdout: hook stdout is parsed as strict JSON, and
@@ -114,20 +118,20 @@ case "${AUTOCOMMIT_NOTIFY_STDOUT:-}" in
 esac
 
 record_run() {
-  local status=$1 stage=${2:-} detail=${3:-} json ts
+  local status=$1 stage=${2:-} detail=${3:-} ai=${4:-} json ts
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true)
   if [ "$status" = "ok" ]; then
-    json=$(printf '{"at":"%s","status":"ok","agent":"%s"}' "$ts" "$agent")
+    json=$(printf '{"at":"%s","status":"ok","agent":"%s"%s}' "$ts" "$agent" "$ai")
   else
-    json=$(printf '{"at":"%s","status":"error","agent":"%s","stage":"%s","detail":"%s"}' \
-      "$ts" "$agent" "$(json_escape "$stage")" "$(json_escape "$detail")")
+    json=$(printf '{"at":"%s","status":"error","agent":"%s","stage":"%s","detail":"%s"%s}' \
+      "$ts" "$agent" "$(json_escape "$stage")" "$(json_escape "$detail")" "$ai")
   fi
   printf '%s\n' "$json" > "$state_file.tmp.$$" 2>/dev/null \
     && mv -f "$state_file.tmp.$$" "$state_file" 2>/dev/null || true
 }
 
 report_failure() {
-  local stage=$1 detail=$2 ts msg
+  local stage=$1 detail=$2 ai=${3:-} ts msg
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true)
   msg=$(json_escape "$detail")
   printf '%s [%s] %s: %s\n' "$ts" "$agent" "$stage" "$msg" >> "$log_file" 2>/dev/null || true
@@ -135,7 +139,7 @@ report_failure() {
     tail -n 200 "$log_file" > "$log_file.tmp.$$" 2>/dev/null \
       && mv -f "$log_file.tmp.$$" "$log_file" 2>/dev/null || true
   fi
-  record_run error "$stage" "$detail"
+  record_run error "$stage" "$detail" "$ai"
   if [ "$notify_stdout" = "1" ]; then
     printf '{"systemMessage":"%s","suppressOutput":true}\n' \
       "$(json_escape "⚠ auto-commit failed ($stage): $detail")"
@@ -143,7 +147,7 @@ report_failure() {
 }
 
 report_success() {
-  record_run ok
+  record_run ok "" "" "${1:-}"
 }
 
 # A missing git binary is a real failure. "Not a git work tree" is an expected
@@ -366,16 +370,38 @@ fi
 msgfile=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; exit 0; }
 difffile=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile"; exit 0; }
 sensitive_out=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile"; exit 0; }
+ai_status=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
 # Layer 2 input: the staged diff (HEAD vs index) for the model to screen; the
 # shell caps it at 20 KB and the helper clips again. Empty diff (binary-only
 # stages) simply skips the content screen.
 git diff --cached --no-color --no-textconv --no-ext-diff 2>/dev/null | head -c 20000 > "$difffile" || true
 if [ -n "$runtime" ] && [ -f "$helper" ]; then
-  printf '%s' "$hook_input" | CHANGED="$changed" DIFF_FILE="$difffile" SENSITIVE_OUT="$sensitive_out" ELECTRON_RUN_AS_NODE=1 "$runtime" "$helper" > "$msgfile" 2>/dev/null
+  printf '%s' "$hook_input" | CHANGED="$changed" DIFF_FILE="$difffile" SENSITIVE_OUT="$sensitive_out" AI_STATUS_OUT="$ai_status" ELECTRON_RUN_AS_NODE=1 "$runtime" "$helper" > "$msgfile" 2>/dev/null
+elif [ -z "$runtime" ]; then
+  printf '%s\n' '{"status":"unavailable","reason":"no JavaScript runtime found (node/Electron)"}' > "$ai_status"
+else
+  printf '%s\n' '{"status":"unavailable","reason":"auto-commit-msg.cjs not found next to the hook"}' > "$ai_status"
 fi
 if [ ! -s "$msgfile" ]; then
   if [ "$file_count" -eq 1 ]; then unit=file; else unit=files; fi
   printf 'chore: update %s %s\n' "$file_count" "$unit" > "$msgfile"
+  # The helper normally writes an AI record even when it falls back to
+  # heuristics; an empty record here means it produced nothing at all.
+  if [ ! -s "$ai_status" ]; then
+    printf '%s\n' '{"status":"error","reason":"message helper produced no output"}' > "$ai_status"
+  fi
+fi
+
+# Embed the helper's compact JSON as the "ai" field of last-run.json. The
+# helper already bounds, single-lines and scrubs the record; only a shape
+# check is needed here, and a malformed record is dropped rather than
+# corrupting the state file.
+ai_field=""
+if [ -s "$ai_status" ]; then
+  ai_json=$(tr -d '\r\n' < "$ai_status" | head -c 4096)
+  case "$ai_json" in
+    \{*\}) ai_field=",\"ai\":$ai_json" ;;
+  esac
 fi
 
 # Layer 2 results: unstage what the model flagged (the helper already matched
@@ -393,13 +419,13 @@ done < "$sensitive_out"
 # If the sensitive gate cannot unstage a flagged path, committing anyway would
 # leak it. Abort, unstage everything, and surface the failure instead.
 if [ -n "$gate_failed" ]; then
-  report_failure "sensitive gate" "could not unstage: $(printf '%s' "$gate_failed" | tr '\n' ' ')"
+  report_failure "sensitive gate" "could not unstage: $(printf '%s' "$gate_failed" | tr '\n' ' ')" "$ai_field"
   git reset -q >/dev/null 2>&1 || true
-  rm -f "$msgfile" "$difffile" "$sensitive_out"
+  rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"
   exit 0
 fi
 if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
-  git diff --cached --quiet 2>/dev/null && { rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
+  git diff --cached --quiet 2>/dev/null && { rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"; exit 0; }
   {
     printf '\n'
     printf '%s\n' "⚠ excluded from this commit (sensitive):"
@@ -410,15 +436,15 @@ fi
 commit_output=$(git -c commit.gpgsign=false commit -F "$msgfile" --no-verify 2>&1)
 commit_status=$?
 if [ "$commit_status" -eq 0 ]; then
-  report_success
+  report_success "$ai_field"
 else
   case "$commit_output" in
     *"nothing to commit"*|*"nothing added to commit"*|*"no changes added to commit"*)
       : ;;  # a parallel hook invocation already committed this turn
     *)
-      report_failure "git commit" "$commit_output"
+      report_failure "git commit" "$commit_output" "$ai_field"
       ;;
   esac
 fi
-rm -f "$msgfile" "$difffile" "$sensitive_out"
+rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"
 exit 0
