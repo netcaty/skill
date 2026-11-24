@@ -248,57 +248,51 @@ masks the key; never echo the key in plain text. With no model source at all,
 commits still happen with heuristic messages. Per-host sources are listed in
 [install internals](references/install-internals.md).
 
-## Dialog follow-ups
-
-After installing, tell the user these phrases — not raw script commands. When
-one is typed:
-
-- `安装 hook` (or `启用自动提交`): run `bash scripts/run.sh install` (user scope).
-  If any scope is already installed, say so instead of adding a second one.
-- `项目级别启用 hook`: nothing installed → run
-  `bash scripts/run.sh install --scope workspace`. If user scope is installed,
-  uninstall it first and then install workspace scope — `install.cjs` refuses
-  both scopes at once, and running them together commits twice per turn. If
-  workspace scope is already installed, just say so.
-- `禁用 hook`: run `bash scripts/run.sh status` first, then
-  `bash scripts/run.sh disable`. Do not uninstall unless the user asks to remove
-  it (see `卸载 hook`).
-- `恢复 hook` (or `恢复自动提交`): run `bash scripts/run.sh enable`; it removes
-  the marker and the next Stop commits again. No reinstall is needed.
-- `卸载 hook`: run `bash scripts/run.sh status` first, then uninstall every
-  installed scope (`bash scripts/run.sh uninstall`, plus `--scope workspace`
-  where needed). This removes the entry and clears any pause marker. Keep the
-  copied scripts unless the user asks for `--purge`.
-- `更新 hook` (or `更新 skill`): run `bash scripts/run.sh status --update` first
-  — its `update` section names the stale files. Then refresh the skill directory
-  (checkout: `bash install.sh` there; no checkout: re-run the curl one-liner),
-  run `bash scripts/run.sh install`, and re-run `status --update` to verify. Say
-  that hook assets apply on the next Stop while `SKILL.md` changes need a new
-  session.
-- `查看 hook 状态`: run `bash scripts/run.sh status --all` (add `--json` when
-  the result is parsed programmatically). Report installed/enabled/paused per
-  scope. Add `--update` when the user also asks about outdated files, and
-  `--doctor` for blockers.
-- `设置 LLM 配置[: url=... key=... model=...]`: run
-  `bash scripts/run.sh setup-llm --url <url> --key <key> [--model <id[,id...]>]`;
-  ask for any missing values first. After saving, confirm with `--show` (key
-  masked) and never echo the key in plain text. The saved config outranks the
-  session provider — say so when saving.
-- `查看 LLM 配置`: `bash scripts/run.sh setup-llm --show`.
-  `清除 LLM 配置`: `bash scripts/run.sh setup-llm --clear`.
-
 ## What to tell the user
 
-- After install: user scope applies to every project, and a new session — or
-  reopening the workspace — picks up the registration. Offer the dialog phrases
-  above.
-- After status: report installed/paused per scope. A `last run: ok` line is
-  healthy; a `last run: FAILED <time> (<stage>)` line should be quoted with its
-  log path and fix. The `ai:` line explains a heuristic commit message; it is
-  not a failed commit.
-- After pause: the registration is kept; `恢复 hook` resumes it without a
+Report outcomes in the user's terms — scope, whether the registration was kept,
+and when the change takes effect — and offer the matching dialog phrases
+instead of raw script commands. Below, `install`, `status`, `disable` and so on
+are `bash scripts/run.sh` subcommands:
+
+- `安装 hook` / `启用自动提交` — run `install` (user scope). If any scope is
+  already installed, report that instead of adding a second one.
+- `项目级别启用 hook` — if nothing is installed, run `install --scope
+  workspace`. If user scope is installed, uninstall it first: two scopes commit
+  twice per turn, and `install.cjs` refuses both. If workspace scope is already
+  installed, say so.
+- `禁用 hook` — run `status` first, then `disable`. This pauses the hook without
+  uninstalling; leave the registration in place unless the user asks to remove
+  it.
+- `恢复 hook` / `恢复自动提交` — run `enable`; the next Stop commits again, and no
+  reinstall is needed.
+- `卸载 hook` — run `status` first, then `uninstall` for every installed scope
+  (add `--scope workspace` where needed). This removes the entry and clears any
+  pause marker; keep the copied scripts unless the user asks for `--purge`.
+- `更新 hook` / `更新 skill` — run `status --update` first to name the stale
+  files, then refresh the skill directory (checkout: `bash install.sh`;
+  otherwise re-run the curl one-liner), run `install`, and verify with
+  `status --update`. Tell the user hook assets apply on the next Stop, while
+  `SKILL.md` changes need a new session.
+- `查看 hook 状态` — run `status --all`, adding `--json` for machine parsing,
+  `--update` for stale files, or `--doctor` for blockers. Report
+  installed/enabled/paused per scope.
+- `设置 LLM 配置[: url=... key=... model=...]` — ask for missing values, then run
+  `setup-llm --url <url> --key <key> [--model <id[,id...]>]`; confirm with
+  `--show` and never echo the key. Mention that the saved config outranks the
+  session provider.
+- `查看 LLM 配置` / `清除 LLM 配置` — run `setup-llm --show` / `setup-llm --clear`.
+
+When reporting:
+
+- **Installed** — user scope covers every project; a new session, or reopening
+  the workspace, picks up the registration.
+- **Status** — report installed/paused per scope. `last run: ok` is healthy;
+  quote a `last run: FAILED <time> (<stage>)` line with its log path and fix.
+  The `ai:` line explains a heuristic message; it is not a failed commit.
+- **Paused** — the registration is kept; `恢复 hook` resumes it without a
   reinstall.
-- Never print an API key; use the masked `setup-llm --show`.
+- **Keys** — never print an API key; use the masked `setup-llm --show`.
 
 ## Safety
 
