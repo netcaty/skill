@@ -235,19 +235,35 @@ remaining config references them (the `backups/` directory is kept).
 ## Commit-message model
 
 By default the message uses the host's session provider. A saved config at
-`~/.agents/skills/auto-commit-hook/llm-config.json` (override the path with
-`AUTOCOMMIT_LLM_CONFIG`) outranks it; `AUTOCOMMIT_LLM_*` env overrides outrank
-the saved config.
+`<skill-dir>/llm-config.json` (default
+`~/.agents/skills/auto-commit-hook/llm-config.json`; override the path with
+`AUTOCOMMIT_LLM_CONFIG`) outranks it, and `AUTOCOMMIT_LLM_*` env overrides
+outrank the saved config. With no model source at all, commits still happen
+with heuristic messages.
 
-```bash
-bash scripts/run.sh setup-llm --url https://example.com/v1/messages --key sk-... --model glm-5.3-flash,auto/glm-5.3-flash
-bash scripts/run.sh setup-llm --show
-bash scripts/run.sh setup-llm --clear
+The file is user-managed: never ask for an API key in the conversation and never
+run a command that takes it as an argument. Give the user the path and this
+format, and let them add the key themselves:
+
+```json
+{
+  "url": "https://example.com/v1/messages",
+  "key": "sk-...",
+  "model": ["glm-5.3-flash", "auto/glm-5.3-flash"]
+}
 ```
 
-`--model` accepts a comma-separated candidate list tried in order. `--show`
-masks the key; never echo the key in plain text. With no model source at all,
-commits still happen with heuristic messages. Per-host sources are listed in
+`url`, `key` and `model` are required. A URL ending in `/v1/messages` uses the
+Anthropic request style, `/v1/chat/completions` the OpenAI one; `model` takes a
+list tried in order (a comma-separated string works too).
+
+```bash
+bash scripts/run.sh setup-llm --show     # verify; the key is masked
+bash scripts/run.sh setup-llm --clear    # remove the file
+```
+
+`setup-llm --url/--key/--model` is for scripted setups only; do not use it to
+collect a key from the user. Per-host sources are listed in
 [install internals](references/install-internals.md).
 
 ## What to tell the user
@@ -279,10 +295,12 @@ are `bash scripts/run.sh` subcommands:
 - `查看 hook 状态` — run `status --all`, adding `--json` for machine parsing,
   `--update` for stale files, or `--doctor` for blockers. Report
   installed/enabled/paused per scope.
-- `设置 LLM 配置[: url=... key=... model=...]` — ask for missing values, then run
-  `setup-llm --url <url> --key <key> [--model <id[,id...]>]`; confirm with
-  `--show` and never echo the key. Mention that the saved config outranks the
-  session provider.
+- `设置 LLM 配置` — never ask for the API key in chat and never run a command
+  that takes it. Point the user at `<skill-dir>/llm-config.json` and the JSON
+  format in [Commit-message model](#commit-message-model); they write the key
+  themselves. Help only with non-secret values (URL, model ids). Confirm
+  afterwards with `setup-llm --show` (key masked) and mention that the saved
+  config outranks the session provider.
 - `查看 LLM 配置` / `清除 LLM 配置` — run `setup-llm --show` / `setup-llm --clear`.
 
 When reporting:
@@ -294,7 +312,8 @@ When reporting:
   The `ai:` line explains a heuristic message; it is not a failed commit.
 - **Paused** — the registration is kept; `恢复 hook` resumes it without a
   reinstall.
-- **Keys** — never print an API key; use the masked `setup-llm --show`.
+- **Keys** — never print, request, or accept an API key in chat; the user puts
+  it in `llm-config.json` themselves, and `setup-llm --show` reports it masked.
 
 ## Safety
 
@@ -333,7 +352,7 @@ When reporting:
 | `--update` | status | drift between installed and source files |
 | `--source <dir>` | status `--update` | checkout path when no `.source.json` |
 | `--json` | all | machine-readable result |
-| `--url`, `--key`, `--model` | setup-llm | endpoint and candidate models |
+| `--url`, `--key`, `--model` | setup-llm | endpoint, key and candidate models; `--key` is for scripted setups only |
 | `--show`, `--clear` | setup-llm | print (masked) or remove the saved config |
 
 ## Reference files
