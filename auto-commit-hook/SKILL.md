@@ -7,7 +7,9 @@ description: >-
   or upgrade the Stop hook or the installed skill, set up per-turn git
   checkpoints, configure the model that writes commit messages, or diagnose why
   automatic commits are not happening.
-  触发词：启用/暂停/恢复/禁用 自动提交，安装/卸载/更新/升级 hook 或 skill，查看 hook 状态，设置/查看/清除 LLM 配置。
+  Trigger phrases: enable / pause / resume / disable auto-commit; install,
+  uninstall, update, or upgrade the hook or skill; view hook status; set,
+  show, or clear the LLM config.
 ---
 
 # Auto-commit hook
