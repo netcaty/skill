@@ -268,52 +268,108 @@ collect a key from the user. Per-host sources are listed in
 
 ## What to tell the user
 
-Report outcomes in the user's terms — scope, whether the registration was kept,
-and when the change takes effect — and offer the matching dialog phrases
-instead of raw script commands. Below, `install`, `status`, `disable` and so on
-are `bash scripts/run.sh` subcommands:
+Report in the user's terms — scope, whether the registration was kept, and when
+a change takes effect — and offer the matching dialog phrases instead of raw
+script commands. Ground every report in the lines the command just printed;
+never claim a state `status` has not shown. If a command exits non-zero, quote
+its `Error:` line and the fix it names before suggesting anything else. Below,
+`install`, `status`, `disable` and so on are `bash scripts/run.sh` subcommands.
 
-- `安装 hook` / `启用自动提交` — run `install` (user scope). If any scope is
+### Dialog phrases
+
+- `安装 hook` / `启用自动提交` — run `install` (user scope); if any scope is
   already installed, report that instead of adding a second one.
-- `项目级别启用 hook` — if nothing is installed, run `install --scope
-  workspace`. If user scope is installed, uninstall it first: two scopes commit
-  twice per turn, and `install.cjs` refuses both. If workspace scope is already
-  installed, say so.
-- `禁用 hook` — run `status` first, then `disable`. This pauses the hook without
-  uninstalling; leave the registration in place unless the user asks to remove
-  it.
-- `恢复 hook` / `恢复自动提交` — run `enable`; the next Stop commits again, and no
-  reinstall is needed.
+- `项目级别启用 hook` — run `install --scope workspace`; if user scope is
+  installed, uninstall it first — two scopes commit twice per turn, and
+  `install.cjs` refuses both.
+- `禁用 hook` — run `status` first, then `disable`; it pauses the hook without
+  uninstalling, so leave the registration in place.
+- `恢复 hook` / `恢复自动提交` — run `enable`.
 - `卸载 hook` — run `status` first, then `uninstall` for every installed scope
-  (add `--scope workspace` where needed). This removes the entry and clears any
-  pause marker; keep the copied scripts unless the user asks for `--purge`.
-- `更新 hook` / `更新 skill` — run `status --update` first to name the stale
-  files, then refresh the skill directory (checkout: `bash install.sh`;
-  otherwise re-run the curl one-liner), run `install`, and verify with
-  `status --update`. Tell the user hook assets apply on the next Stop, while
-  `SKILL.md` changes need a new session.
-- `查看 hook 状态` — run `status --all`, adding `--json` for machine parsing,
-  `--update` for stale files, or `--doctor` for blockers. Report
-  installed/enabled/paused per scope.
+  (add `--scope workspace` where needed); keep the copied scripts unless the
+  user asks for `--purge`.
+- `更新 hook` / `更新 skill` — run `status --update` first, then refresh the
+  skill directory (checkout: `bash install.sh`; otherwise re-run the curl
+  one-liner), run `install`, and verify with `status --update`.
+- `查看 hook 状态` — run `status --all`; add `--json` for machine parsing,
+  `--update` for stale files, or `--doctor` for blockers.
 - `设置 LLM 配置` — never ask for the API key in chat and never run a command
-  that takes it. Point the user at `<skill-dir>/llm-config.json` and the JSON
-  format in [Commit-message model](#commit-message-model); they write the key
-  themselves. Help only with non-secret values (URL, model ids). Confirm
-  afterwards with `setup-llm --show` (key masked) and mention that the saved
-  config outranks the session provider.
+  that takes it; point the user at `<skill-dir>/llm-config.json` and the format
+  in [Commit-message model](#commit-message-model).
 - `查看 LLM 配置` / `清除 LLM 配置` — run `setup-llm --show` / `setup-llm --clear`.
 
-When reporting:
+### After install
 
-- **Installed** — user scope covers every project; a new session, or reopening
-  the workspace, picks up the registration.
-- **Status** — report installed/paused per scope. `last run: ok` is healthy;
-  quote a `last run: FAILED <time> (<stage>)` line with its log path and fix.
-  The `ai:` line explains a heuristic message; it is not a failed commit.
-- **Paused** — the registration is kept; `恢复 hook` resumes it without a
-  reinstall.
-- **Keys** — never print, request, or accept an API key in chat; the user puts
-  it in `llm-config.json` themselves, and `setup-llm --show` reports it masked.
+- Always name the scope: `user` covers every project, `workspace` only the
+  resolved repo, and the config file it wrote. Say a new session (or reopening
+  the workspace) picks up the registration.
+- When the output shows `paused : yes` or `Note: auto-commit is paused`, say
+  the hook stays paused and `恢复 hook` resumes it without a reinstall.
+- When the output shows `backup :`, quote the path only if the user asks about
+  their previous config; it is a backup, not an error.
+- When the output warns `workspace scope resolved to the skill directory`, say
+  the target must be the repo being checkpointed: rerun from there or pass
+  `--project <dir>`.
+
+### After status
+
+- Always report installed/not installed and paused/active per scope, naming the
+  config file of each installed scope. For a scope that is not installed, offer
+  `安装 hook` (user) or `项目级别启用 hook` (workspace).
+- `last run: ok` — call the hook healthy. If the user asked why no commit
+  happened, run `--doctor` before guessing.
+- `last run: FAILED <time> (<stage>)` — quote the line with its log path, name
+  the failing stage, and point at
+  [troubleshooting](references/troubleshooting.md); do not suggest a reinstall.
+- `disabled: yes` — say the hook is paused, not uninstalled; `恢复 hook`
+  resumes it without a reinstall.
+- `ai: unavailable` / `skipped` / `disabled` / `error` — say the commit still
+  succeeded with a heuristic message; it is diagnostics, not a failed commit,
+  and `error` lists per-model failures.
+- `enabled: (n/a for command hooks)` — normal for command-string hosts; do not
+  report it as a problem.
+- With `--update`, quote the `differing:` file names; `up to date` on both
+  lines means there is nothing to do.
+
+### After disable or enable
+
+- `disable` keeps the registration and writes a pause marker: say commits stop
+  from the next Stop, and `恢复 hook` resumes without a reinstall.
+- `enable` removes the marker: say the next Stop commits again and no reinstall
+  is needed.
+- Neither rewrites the host config; never describe them as install/uninstall.
+
+### After uninstall
+
+- Say which scopes the entry was removed from and that other hooks were left
+  untouched.
+- When the output says `not installed in <file>`, say nothing was registered
+  there and no change was made.
+- When a `pause :` line appears, say the pause marker was cleared.
+- Without `--purge`, say the copied scripts remain, so `安装 hook` works without
+  reinstalling the skill; with `purged :`, say the scripts were removed
+  (`backups/` is kept).
+
+### After update
+
+- Report which `differing:` files prompted the refresh, and confirm
+  `up to date` on both lines afterwards.
+- Say hook assets take effect on the next Stop, while `SKILL.md`, `references/`
+  and `scripts/` changes need a new session.
+
+### For the LLM config
+
+- Never print, request, or accept an API key in chat; the user writes it into
+  `<skill-dir>/llm-config.json` themselves, and `setup-llm --show` reports it
+  masked.
+- When `--show` prints `file :` and `url :`, read them back as the effective
+  endpoint; never reconstruct or guess the masked key.
+- When it prints `No manual LLM config saved`, say the host's session provider
+  is used; offer the file path and format if the user wants a manual endpoint.
+- When `--clear` prints `Cleared <file>`, say the host session provider is used
+  again; `No manual LLM config to clear` means there was nothing to remove.
+- Whenever a saved config is involved, mention that it outranks the session
+  provider.
 
 ## Safety
 
