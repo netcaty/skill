@@ -15,7 +15,11 @@ of band instead of aborting:
   `2026-11-25T21:49:20+08:00`; no conversion is needed when comparing them with
   the clock or with host/provider logs.
 - `status` prints that state: `last run: FAILED <time> (<stage>) <detail>`
-  plus the log path; `--json` exposes the same object as `lastRun`.
+  plus the log path; `--json` exposes the same object as `lastRun`. A run whose
+  changed files were all excluded by the sensitive gate is recorded as
+  `status: "ok"` with `skipped: "sensitive"` and prints as
+  `last run: skipped <time> (sensitive)` — the commit was intentionally
+  skipped, not failed, and `last-run.json` no longer describes an older turn.
 - Claude Code additionally receives a non-blocking stdout payload
   `{"systemMessage":"⚠ auto-commit failed (...)","suppressOutput":true}`, which
   the UI shows immediately. Other hosts get no stdout by default (their hook
@@ -62,8 +66,10 @@ git -C /path/to/repo log -1
   again. Otherwise run `status --doctor`; it reports the configured bash,
   Claude `disableAllHooks` / `allowManagedHooksOnly`, and whether git can use
   the project. A `last run: FAILED ...` line names the failing stage and the log
-  path. On ZCode also confirm `hooks.enabled: true`; on Claude Code check
-  workspace trust. If git reports `dubious ownership`, run:
+  path. A `last run: skipped <time> (sensitive)` line means the sensitive gate
+  excluded every changed file, so nothing was meant to be committed. On ZCode
+  also confirm `hooks.enabled: true`; on Claude Code check workspace trust. If
+  git reports `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic or subject-only message**: no model produced a usable draft, so the
   message is the deterministic file list (`chore: update a.txt, b.txt and N

@@ -642,7 +642,9 @@ function readState(agent) {
 }
 
 // Last commit attempt outcome written by hooks/auto-commit.sh. Expected skips
-// (clean tree, not a repo) leave it untouched; ok/error are recorded.
+// (clean tree, not a repo) leave it untouched; ok/error are recorded, and a
+// run whose changes were all excluded by the sensitive gate is recorded as ok
+// with skipped: "sensitive".
 function readLastRun(agent) {
   try {
     const data = JSON.parse(fs.readFileSync(

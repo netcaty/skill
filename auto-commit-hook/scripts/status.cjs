@@ -282,6 +282,9 @@ function main() {
         " (" + (result.lastRun.stage || "?") + ") " +
         (result.lastRun.detail || ""));
       console.log("  log    : " + path.join(result.installDir, "auto-commit.log"));
+    } else if (result.lastRun && result.lastRun.skipped) {
+      console.log("  last run: skipped " + (result.lastRun.at || "?") +
+        " (" + result.lastRun.skipped + ")");
     } else if (result.lastRun) {
       console.log("  last run: ok " + (result.lastRun.at || ""));
     }

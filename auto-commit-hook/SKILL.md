@@ -200,6 +200,8 @@ anything else.
   `安装 hook` (user) or `项目级别启用 hook` (workspace).
 - `last run: ok` — call the hook healthy (run `--doctor` before guessing if
   commits are missing).
+- `last run: skipped <time> (sensitive)` — the sensitive gate excluded every
+  changed file, so there was nothing to commit; it is not a failure.
 - `last run: FAILED <time> (<stage>)` — quote the line with its log path, name
   the failing stage, and point at
   [troubleshooting](references/troubleshooting.md); do not suggest a reinstall.

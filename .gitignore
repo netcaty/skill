@@ -10,6 +10,9 @@ auto-commit-hook/hooks/last-run.json
 auto-commit-hook/hooks/auto-commit.log
 auto-commit-hook/hooks/*.tmp.*
 
+# DSH 本地调试插件（回合结束环境变量转储），不进仓库
+.dsh/
+
 # 用户配置（可能含 API key），只在安装目录使用，绝不进仓库
 auto-commit-hook/config.json
 auto-commit-hook/config.json.tmp-*

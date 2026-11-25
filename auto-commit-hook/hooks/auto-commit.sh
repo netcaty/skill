@@ -17,7 +17,9 @@
 # optional model judgement, and it keeps working when no model runs. Excluded
 # paths are not mentioned in the commit message (last-run.json records the
 # count), and a path that cannot be unstaged aborts the commit instead of
-# being committed.
+# being committed. When the gate removes every staged file, the run is still
+# recorded (status ok, skipped: "sensitive") so last-run.json does not keep
+# describing an earlier turn.
 # Failures: the hook always exits 0, but real failures (git add/commit, the
 # sensitive gate, missing git) update last-run.json and append to a lazily
 # created, bounded auto-commit.log under the state directory, and status.cjs
@@ -153,10 +155,14 @@ iso_now() {
 }
 
 record_run() {
-  local status=$1 stage=${2:-} detail=${3:-} ai=${4:-} json ts
+  local status=$1 stage=${2:-} detail=${3:-} ai=${4:-} skipped=${5:-} skip_json json ts
   ts=$(iso_now)
+  skip_json=""
+  if [ -n "$skipped" ]; then
+    skip_json=$(printf ',"skipped":"%s"' "$(json_escape "$skipped")")
+  fi
   if [ "$status" = "ok" ]; then
-    json=$(printf '{"at":"%s","status":"ok","agent":"%s"%s}' "$ts" "$agent" "$ai")
+    json=$(printf '{"at":"%s","status":"ok","agent":"%s"%s%s}' "$ts" "$agent" "$skip_json" "$ai")
   else
     json=$(printf '{"at":"%s","status":"error","agent":"%s","stage":"%s","detail":"%s"%s}' \
       "$ts" "$agent" "$(json_escape "$stage")" "$(json_escape "$detail")" "$ai")
@@ -182,7 +188,7 @@ report_failure() {
 }
 
 report_success() {
-  record_run ok "" "" "${1:-}"
+  record_run ok "" "" "${1:-}" "${2:-}"
 }
 
 # A missing git binary is a real failure. "Not a git work tree" is an expected
@@ -303,10 +309,14 @@ while IFS= read -r f; do
 done <<EOF
 $sensitive_names
 EOF
-# Nothing left to commit if layer 1 excluded everything. The fallback subject
-# is built later from the index, after layer 2 has also run.
+# Nothing left to commit if layer 1 excluded everything. Record the run (with
+# the skip reason) instead of leaving an older outcome in last-run.json; the
+# fallback subject is built later from the index, after layer 2 has also run.
 file_count=$(git diff --cached --name-only -z 2>/dev/null | tr -cd '\000' | wc -c | tr -d ' ')
-[ "$file_count" -gt 0 ] || exit 0
+if [ "$file_count" -eq 0 ]; then
+  report_success "" "sensitive"
+  exit 0
+fi
 
 helper="$script_dir/auto-commit-msg.cjs"
 
@@ -471,8 +481,10 @@ if [ -n "$gate_failed" ]; then
   rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
   exit 0
 fi
-# If layer 2 left nothing staged, there is nothing to commit.
+# If layer 2 left nothing staged, there is nothing to commit. Keep the run
+# visible: otherwise last-run.json would still describe an earlier turn.
 git diff --cached --quiet 2>/dev/null && {
+  report_success "$ai_field" "sensitive"
   rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
   exit 0
 }
