@@ -797,15 +797,6 @@ function userConfigFile() {
   return path.join(skillInstallDir(), USER_CONFIG_NAME);
 }
 
-// Legacy files are only existence-checked (never parsed): the rename to
-// config.json is a hard cut, with a migration hint instead of a fallback.
-function legacyConfigFiles() {
-  const canonical = path.join(os.homedir(), ".agents", "skills", "auto-commit-hook",
-    "llm-config.json");
-  const sibling = path.join(path.dirname(userConfigFile()), "llm-config.json");
-  return path.resolve(sibling) === path.resolve(canonical) ? [canonical] : [canonical, sibling];
-}
-
 // Never throws. Returns { file, exists, data, error }. A malformed or
 // unreadable file is treated as absent: the hook fails open.
 function readUserConfig() {
@@ -998,14 +989,6 @@ function effectiveConfig() {
   const sourceDir = pickString("AUTOCOMMIT_SOURCE_DIR", "sourceDir");
   if (!sourceDir.source) sourceDir.source = "source-json";
 
-  const legacy = legacyConfigFiles().map(file => ({ path: file, exists: fs.existsSync(file) }));
-  const legacyWarnings = legacy.filter(item => item.exists).map(item =>
-    "legacy llm-config.json is not read: " + item.path +
-    " (move url/key/model into config.json)");
-  if (process.env.AUTOCOMMIT_LLM_CONFIG) {
-    warnings.push("AUTOCOMMIT_LLM_CONFIG is no longer used; set AUTOCOMMIT_CONFIG instead");
-  }
-
   return {
     file: read.file,
     exists: read.exists,
@@ -1015,8 +998,7 @@ function effectiveConfig() {
     effective: {
       url, key, model, noAi, claudeBin, aiTimeoutMs, aiTotalMs, sourceDir
     },
-    legacy,
-    warnings: warnings.concat(legacyWarnings)
+    warnings
   };
 }
 
@@ -1127,7 +1109,6 @@ module.exports = {
   DEFAULT_TIMEOUT_MS,
   skillInstallDir,
   userConfigFile,
-  legacyConfigFiles,
   readUserConfig,
   maskSecret,
   normalizeModels,

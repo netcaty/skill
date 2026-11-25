@@ -9,7 +9,6 @@
 // Flat schema: the manual endpoint is url/key/model (all three required
 // together); noAi, claudeBin, aiTimeoutMs, aiTotalMs and sourceDir are runtime
 // settings. A file with only settings keeps the host's session provider.
-// The legacy llm-config.json is not read; --show warns when it still exists.
 //
 //   node config.cjs --url <llm-url> --key <api-key> [--model <id[,id...]>]
 //   node config.cjs --set <key>=<value> [--set ...] [--unset <key> ...]
@@ -145,7 +144,6 @@ function show(opts) {
         ...info.effective,
         key: { ...info.effective.key, value: lib.maskSecret(info.effective.key.value) }
       },
-      legacy: info.legacy,
       warnings: info.warnings
     }));
     return;
@@ -205,9 +203,7 @@ function main() {
       "",
       "Inspect:",
       "  --show [--json]        effective values and their source (key masked)",
-      "  --clear                remove the whole config.json",
-      "",
-      "Legacy llm-config.json is not read (hard cut); --show reports it if present."
+      "  --clear                remove the whole config.json"
     ].join("\n"));
     return;
   }

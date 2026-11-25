@@ -9,10 +9,6 @@ Priority is per key: **environment variable > config.json > default/session
 provider**. Environment variables suit CI and tests; `config.json` suits daily
 use.
 
-The legacy `llm-config.json` (and `AUTOCOMMIT_LLM_CONFIG`) is **not read at
-all**. `config --show` and `install.sh` warn when the old file still exists;
-move its `url`/`key`/`model` into `config.json` and delete it.
-
 ## Config-able settings
 
 | config key | environment variable | default | effect |

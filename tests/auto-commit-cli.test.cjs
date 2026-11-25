@@ -395,32 +395,6 @@ test("malformed config.json values fail open", async () => {
   assert.strictEqual(readStatus(dir).status, "ok");
 });
 
-test("legacy llm-config.json is not read", async () => {
-  const dir = tmp();
-  const legacy = path.join(dir, "llm-config.json");
-  fs.writeFileSync(legacy, JSON.stringify({
-    url: "http://127.0.0.1:1/v1/messages",
-    key: "test-key",
-    model: ["test-model"]
-  }));
-  const trace = path.join(dir, "trace.json");
-  const env = cliCase(dir, {
-    FAKE_MODE: "ok",
-    FAKE_TRACE: trace,
-    AUTOCOMMIT_LLM_CONFIG: legacy,
-    AUTOCOMMIT_CONFIG: path.join(dir, "missing-config.json")
-  });
-
-  const res = await runHelper(env,
-    JSON.stringify({ last_assistant_message: "修复了问题" }));
-
-  assert.strictEqual(res.code, 0, res.stderr);
-  const status = readStatus(dir);
-  assert.strictEqual(status.source, "claude", "the legacy file must be ignored");
-  assert.strictEqual(status.transport, "cli");
-  assert.ok(fs.existsSync(trace), "the session CLI fallback must run");
-});
-
 test("the hook never writes config.json", async () => {
   const dir = tmp();
   const cfg = path.join(dir, "config.json");

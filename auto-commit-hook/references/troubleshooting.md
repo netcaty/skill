@@ -85,10 +85,6 @@ git -C /path/to/repo log -1
   pass `--config <file>`. For the runtime file, `config --show` reports an
   unreadable `config.json`; fix or rewrite it with `config --clear` followed by
   `config --url/--key/--model`.
-- **Legacy LLM config ignored**: `llm-config.json` is no longer read (hard cut).
-  `bash scripts/run.sh config --show` warns while it exists; move its
-  `url`/`key`/`model` into `config.json` with
-  `config --url ... --key ... --model ...`, then delete the old file.
 - **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
   against a real `.workbuddy/settings.json`). For other agents, the hook scripts
   are agent-agnostic — pass `--config <path>` if the target uses ZCode's

@@ -12,5 +12,4 @@ auto-commit-hook/hooks/*.tmp.*
 
 # 用户配置（可能含 API key），只在安装目录使用，绝不进仓库
 auto-commit-hook/config.json
-auto-commit-hook/llm-config.json
 auto-commit-hook/config.json.tmp-*

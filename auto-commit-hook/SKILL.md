@@ -169,10 +169,6 @@ bash scripts/run.sh config --unset noAi
 bash scripts/run.sh config --clear                  # remove the whole file
 ```
 
-Legacy `llm-config.json` is no longer read (hard cut). Move its
-`url`/`key`/`model` into `config.json` and delete it; `config --show` warns
-while it still exists.
-
 ## What to tell the user
 
 Report in the user's terms — scope, whether the registration was kept, and when
@@ -250,8 +246,6 @@ anything else.
 - When `--show` reports `(session provider)` for url/key/model, say the host's
   session provider is used (offer `<skill-dir>/config.json` and its format if
   needed). `--clear` prints `Cleared <file>`.
-- When `--show` warns about a legacy `llm-config.json`, say it is no longer read
-  and the user should move `url`/`key`/`model` into `config.json`.
 - When `ai` shows `transport: cli`, say the message came from the local Claude
   Code login state; if it says `Not logged in`, the commit still succeeded
   with the file-list placeholder and retries automatically once the user logs

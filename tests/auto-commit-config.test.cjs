@@ -156,30 +156,6 @@ test("--show --json reports effective env overrides with sources", () => {
   assert.ok(!res.stdout.includes("env-secret-key"), "env keys are masked too");
 });
 
-test("--show warns about a legacy llm-config.json without reading it", () => {
-  const dir = tmp();
-  fs.writeFileSync(path.join(dir, "llm-config.json"), JSON.stringify({
-    url: "https://legacy.example/v1/messages",
-    key: "legacy-secret-key",
-    model: ["legacy-model"]
-  }));
-  const res = run(dir, ["--show"]);
-  assert.strictEqual(res.status, 0, res.stderr);
-  assert.match(res.stdout, /legacy llm-config\.json is not read/);
-  assert.ok(!res.stdout.includes("legacy.example"));
-  assert.ok(!res.stdout.includes("legacy-secret-key"));
-});
-
-test("AUTOCOMMIT_LLM_CONFIG is obsolete and does not change the path", () => {
-  const dir = tmp();
-  const res = run(dir, ["--show"], {
-    AUTOCOMMIT_LLM_CONFIG: path.join(dir, "legacy-path.json")
-  });
-  assert.strictEqual(res.status, 0, res.stderr);
-  assert.match(res.stdout, /AUTOCOMMIT_LLM_CONFIG is no longer used/);
-  assert.match(res.stdout, new RegExp(configPath(dir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-});
-
 test("saving refuses to overwrite invalid JSON", () => {
   const dir = tmp();
   fs.writeFileSync(configPath(dir), "{ not json");
