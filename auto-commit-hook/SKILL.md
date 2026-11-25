@@ -39,27 +39,16 @@ rather than tracing the code. Source review is only for maintaining the skill.
 A paused hook or a stale copy is fixed by `enable` or an update, not by a
 reinstall.
 
-## Requirements
+## Prerequisites and placeholders
 
-| need | detail |
-|---|---|
-| `bash` | Git Bash on Windows |
-| `git` | the repository being checkpointed |
-| Node | not required on `PATH`; `run.sh` discovers a runtime (see [Runtime](#runtime)) |
+Requires `git` and `bash` (Git Bash on Windows); `run.sh` discovers Node
+automatically, even when it is not on `PATH`. Optional environment overrides are
+in [environment](references/environment.md).
 
-### Environment overrides
-
-All optional — see [environment](references/environment.md).
-
-## Conventions
-
-This document is host-neutral. Placeholders stand for values the scripts resolve
-at runtime; replace them with the resolved values before running a command.
-
-| placeholder | meaning |
-|---|---|
-| `<skill-dir>` | installed skill directory: `$AUTOCOMMIT_INSTALL_DIR`, default `~/.agents/skills/auto-commit-hook` |
-| `<agent>` | detected host profile id, as printed by `status` and accepted by `--agent` |
+- `<skill-dir>` — installed skill directory (`$AUTOCOMMIT_INSTALL_DIR`, default
+  `~/.agents/skills/auto-commit-hook`)
+- `<agent>` — detected host profile id printed by `status` and accepted by
+  `--agent`
 
 ## Install
 
@@ -77,32 +66,17 @@ The script stages the skill at `<skill-dir>` and registers no hook.
 bash scripts/run.sh install
 ```
 
-`scripts/run.sh` locates its own scripts, so this works from anywhere. From a
-curl-only install, use `bash <skill-dir>/scripts/run.sh install`.
+Run `bash <skill-dir>/scripts/run.sh <command>` from any directory (or
+`bash scripts/run.sh <command>` inside a checkout).
 
 - `--scope user` (default) applies to every project; `--scope workspace` limits
-  the hook to one repo.
-- The host is auto-detected from the session environment; `--agent <agent>`
-  overrides it, e.g. to install for another host from inside a session.
-- `--config <file>` and `--timeout <ms>` override the config path and the hook
-  timeout (default 30000 ms); `--dry-run` prints the planned change without
-  writing.
-- Installing both scopes commits twice per turn; `install.cjs` refuses unless
-  `--force`.
-
-### Scope and project resolution
-
-Workspace scope resolves the project from the session environment
-(`CODEBUDDY_PROJECT_DIR`, `CLAUDE_PROJECT_DIR`, `ZCODE_PROJECT_DIR`, in that
-order) and falls back to the current directory, so run it from the target repo
-or pass `--project <dir>`. If the resolved project is the skill directory
-itself, the scripts warn that the target must be the repo being checkpointed.
-
-### Runtime
-
-`run.sh` finds Node even when it is not on `PATH`; `AUTOCOMMIT_NODE` pins a
-runtime and `bash scripts/run.sh --print` shows the one chosen.
-`node scripts/<command>.cjs ...` is equivalent where Node is on `PATH`.
+  the hook to one repo (resolved from the session project or cwd; override with
+  `--project <dir>`).
+- `--agent <agent>` overrides host auto-detection, e.g. to install for another
+  host from inside a session.
+- `--config <file>` and `--timeout <ms>` override the config path and hook
+  timeout (default 30000 ms); `--dry-run` previews without writing.
+- Installing both scopes commits twice per turn and is refused unless `--force`.
 
 ## Status and diagnostics
 
@@ -114,22 +88,8 @@ bash scripts/run.sh status --doctor         # runtime blockers
 bash scripts/run.sh status --update         # drift vs the source
 ```
 
-What the lines mean:
-
-- `installed` / `scripts: present` — registration and copied assets.
-- `last run: ok` — healthy. `last run: FAILED <time> (<stage>)` names the
-  failing stage; the log path sits under the install directory. Quote both back
-  and suggest the fix.
-- `disabled: yes` — paused, not uninstalled. `run.sh enable` resumes it.
-- `ai:` — how the message was produced: `ok`, `disabled`, `skipped`,
-  `unavailable` (sources checked and why each was empty) or `error` (per-model
-  failures). `transport` is `http` or `cli`; `cli` means the local `claude -p`
-  login state was used. Diagnostics only; the commit still succeeded.
-- `--doctor` also checks the configured bash, host disable flags, git usability
-  and, with `--all`, duplicate scope installs.
-
-For a failed run, see [troubleshooting](references/troubleshooting.md), which
-also shows how to run the installed hook by hand.
+For a failed run or running the installed hook by hand, see
+[troubleshooting](references/troubleshooting.md).
 
 ## Pause and resume
 
@@ -138,34 +98,26 @@ bash scripts/run.sh disable
 bash scripts/run.sh enable
 ```
 
-`disable` keeps the registration and pauses commits from the next Stop;
-`enable` resumes them. `install` preserves a pause; `uninstall` clears it.
+Temporary pause without touching the host config: commits stop from the next
+Stop (`install` preserves a pause; `uninstall` clears it).
 
 ## Update the installed skill
 
 Two copies refresh independently: the skill directory and the hook assets.
-`status --update` reports drift between them and the source checkout.
+`status --update` reports drift against the source checkout.
 
 ```bash
 bash scripts/run.sh status --update
 bash scripts/run.sh status --update --source /path/to/skill-checkout   # if none was recorded
 ```
 
-`--source` is usually unnecessary: `install.sh` records the checkout. Without a
-recorded checkout, the skill-dir comparison is skipped and the download update
-below applies.
-
-Refresh — every step is idempotent; the hook registration is untouched:
+Refresh — every step is idempotent and leaves the hook registration intact:
 
 1. Refresh the skill directory: run `bash install.sh` from the checkout, or
    re-run the curl one-liner without one.
 2. Refresh the hook assets: `bash scripts/run.sh install`.
-3. Re-run `bash scripts/run.sh status --update` and expect `up to date` on both
+3. Re-run `bash scripts/run.sh status --update` to confirm `up to date` on both
    lines.
-
-Hook assets take effect on the next Stop; updated `SKILL.md`, `references/` and
-`scripts/` apply to new sessions. A paused hook stays paused across `install`;
-`enable` resumes it.
 
 ## Uninstall
 
@@ -174,30 +126,20 @@ bash scripts/run.sh uninstall
 bash scripts/run.sh uninstall --agent <agent> --scope workspace --purge
 ```
 
-To stop commits temporarily, use `disable` instead — it leaves the registration
-alone. Uninstall is for removing the registration itself.
-
-`uninstall` removes only the auto-commit entries and preserves all other hooks;
-it cleans up the config file it created. `--purge` also removes the copied
-scripts and install state when unreferenced (`backups/` is kept).
+Removes only auto-commit entries and cleans up a config file it created; use
+`disable` for a temporary pause. `--purge` also removes copied scripts when
+unreferenced (`backups/` is kept).
 
 ## Commit-message model
 
-By default the message uses the host's session provider. A saved config at
-`<skill-dir>/llm-config.json` (default
-`~/.agents/skills/auto-commit-hook/llm-config.json`; override the path with
-`AUTOCOMMIT_LLM_CONFIG`) outranks it, and `AUTOCOMMIT_LLM_*` env overrides
-outrank the saved config. With no model source at all, commits still happen
-with heuristic messages.
+By default, commit messages use the host's session provider; on Claude Code with
+no provider env or saved config, it falls back to the local `claude` CLI login
+(`haiku`). A saved `<skill-dir>/llm-config.json` outranks the session provider
+(env overrides in [environment](references/environment.md) outrank both).
 
-On Claude Code, when the session has no provider env and no saved config, the
-message uses the installed `claude` CLI's own login (including subscription
-OAuth); it never reads credentials files or the Keychain. The model is fixed to
-`haiku`, and `AUTOCOMMIT_LLM_MODEL` does not affect this path.
-
-The file is user-managed: never ask for an API key in the conversation and never
-run a command that takes it as an argument. Give the user the path and this
-format, and let them add the key themselves:
+The file is user-managed: never ask for, accept, or print an API key in chat,
+and never pass one as a CLI argument (do not use `setup-llm --url/--key`). Give
+the user `<skill-dir>/llm-config.json` and this format to edit themselves:
 
 ```json
 {
@@ -207,17 +149,14 @@ format, and let them add the key themselves:
 }
 ```
 
-`url`, `key` and `model` are required. A URL ending in `/v1/messages` uses the
-Anthropic request style, `/v1/chat/completions` the OpenAI one; `model` takes a
-list tried in order (a comma-separated string works too).
+`url`, `key` and `model` are required. `/v1/messages` uses Anthropic style and
+`/v1/chat/completions` uses OpenAI style; `model` takes a list tried in order (or
+a comma-separated string).
 
 ```bash
 bash scripts/run.sh setup-llm --show     # verify; the key is masked
 bash scripts/run.sh setup-llm --clear    # remove the file
 ```
-
-`setup-llm --url/--key/--model` is for scripted setups only; do not use it to
-collect a key from the user.
 
 ## What to tell the user
 
@@ -226,25 +165,22 @@ a change takes effect. **Run every command yourself; never ask the user to
 execute one manually.** Ground every report in the lines the command just
 printed; never claim a state `status` has not shown. If a command exits
 non-zero, quote its `Error:` line and the fix it names before suggesting
-anything else. Below, `install`, `status`, `disable` and so on are
-`bash scripts/run.sh` subcommands.
+anything else.
 
 ### After install
 
-- Always name the scope: `user` covers every project, `workspace` only the
-  resolved repo, and the config file it wrote. Say a new session (or reopening
+- Always name the scope (`user` covers every project; `workspace` only the
+  resolved repo) and the config file written. Say a new session (or reopening
   the workspace) picks up the registration.
-- With the hook enabled, point the user at [Safety](#safety): every turn it
-  commits all tracked and untracked changes that are not ignored, including
-  changes made before it was installed, and the sensitive-file filter is not a
-  security boundary. Tell them to review `.gitignore` before relying on it —
-  ignored files are never committed.
-- When the output shows `paused : yes` or `Note: auto-commit is paused`, say
-  the hook stays paused and `恢复 hook` resumes it without a reinstall.
-- When the output shows `backup :`, quote the path only if the user asks about
-  their previous config; it is a backup, not an error.
-- When the output warns `workspace scope resolved to the skill directory`, say
-  the target must be the repo being checkpointed: rerun from there or pass
+- With the hook enabled, summarize [Safety](#safety): every turn commits all
+  non-ignored changes (including pre-existing ones), the sensitive-file gate
+  is not a security boundary, and `.gitignore` should be reviewed first.
+- When `paused : yes` appears, say the hook stays paused and `恢复 hook`
+  resumes it without a reinstall.
+- When `backup :` appears, quote the path only if the user asks; it is a
+  backup, not an error.
+- When `workspace scope resolved to the skill directory` appears, say the
+  target must be the repo being checkpointed: rerun from there or pass
   `--project <dir>`.
 
 ### After status
@@ -252,81 +188,70 @@ anything else. Below, `install`, `status`, `disable` and so on are
 - Always report installed/not installed and paused/active per scope, naming the
   config file of each installed scope. For a scope that is not installed, offer
   `安装 hook` (user) or `项目级别启用 hook` (workspace).
-- `last run: ok` — call the hook healthy. If the user asked why no commit
-  happened, run `--doctor` before guessing.
+- `last run: ok` — call the hook healthy (run `--doctor` before guessing if
+  commits are missing).
 - `last run: FAILED <time> (<stage>)` — quote the line with its log path, name
   the failing stage, and point at
   [troubleshooting](references/troubleshooting.md); do not suggest a reinstall.
 - `disabled: yes` — say the hook is paused, not uninstalled; `恢复 hook`
   resumes it without a reinstall.
-- `ai: unavailable` / `skipped` / `disabled` / `error` — say the commit still
-  succeeded with a heuristic message; it is diagnostics, not a failed commit,
-  and `error` lists per-model failures.
+- `ai: unavailable` / `skipped` / `disabled` / `FAILED` (`error` in `--json`)
+  — say the commit still succeeded with a heuristic message; it is diagnostics,
+  not a failed commit, and `FAILED` lists per-model failures.
 - `enabled: (n/a for command hooks)` — normal for command-string hosts; do not
   report it as a problem.
-- With `--update`, quote the `differing:` file names; `up to date` on both
-  lines means there is nothing to do.
+- With `--update`, quote `differing:` file names; `up to date` on both lines
+  means nothing to do.
 
 ### After disable or enable
 
-- `disable` keeps the registration and writes a pause marker: say commits stop
-  from the next Stop, and `恢复 hook` resumes without a reinstall.
-- `enable` removes the marker: say the next Stop commits again and no reinstall
-  is needed.
+- `disable` keeps the registration: say commits stop from the next Stop, and
+  `恢复 hook` resumes without a reinstall.
+- `enable` resumes: say the next Stop commits again and no reinstall is
+  needed.
 - Neither rewrites the host config; never describe them as install/uninstall.
 
 ### After uninstall
 
-- Say which scopes the entry was removed from and that other hooks were left
-  untouched.
-- When the output says `not installed in <file>`, say nothing was registered
-  there and no change was made.
-- When a `pause :` line appears, say the pause marker was cleared.
-- Without `--purge`, say the copied scripts remain, so `安装 hook` works without
-  reinstalling the skill; with `purged :`, say the scripts were removed
-  (`backups/` is kept).
+- Say which scopes were removed (or `not installed in <file>`) and that other
+  hooks were untouched.
+- Without `--purge`, say the copied scripts remain so `安装 hook` works
+  without reinstalling the skill; with `purged :`, say the scripts were
+  removed (`backups/` is kept).
 
 ### After update
 
-- Report which `differing:` files prompted the refresh, and confirm
-  `up to date` on both lines afterwards.
+- Confirm `up to date` on both lines after refreshing (naming any `differing:`
+  files that prompted it).
 - Say hook assets take effect on the next Stop, while `SKILL.md`, `references/`
   and `scripts/` changes need a new session.
 
 ### For the LLM config
 
-- Never print, request, or accept an API key in chat; the user writes it into
-  `<skill-dir>/llm-config.json` themselves, and `setup-llm --show` reports it
-  masked.
-- When `--show` prints `file :` and `url :`, read them back as the effective
-  endpoint; never reconstruct or guess the masked key.
-- When it prints `No manual LLM config saved`, say the host's session provider
-  is used; offer the file path and format if the user wants a manual endpoint.
-- When `--clear` prints `Cleared <file>`, say the host session provider is used
-  again; `No manual LLM config to clear` means there was nothing to remove.
-- Whenever a saved config is involved, mention that it outranks the session
-  provider.
+- Never guess or reconstruct a masked key printed by `setup-llm --show` (and
+  never request or print an API key in chat).
+- Whenever a saved config is involved, mention that it outranks the host's
+  session provider.
+- When `--show` prints `No manual LLM config saved`, or `--clear` prints
+  `Cleared <file>`, say the host's session provider is used (with `--show`,
+  offer `<skill-dir>/llm-config.json` and its format if needed).
 - When `ai` shows `transport: cli`, say the message came from the local Claude
-  Code login state. If the attempt says `Not logged in`, the commit still
-  succeeded with a heuristic message; after the user logs in again, the next
-  turn retries automatically.
+  Code login state; if it says `Not logged in`, the commit still succeeded
+  with heuristics and retries automatically once the user logs in again.
 
 ## Safety
 
-- The hook runs `git add -A` every turn: all tracked/untracked, non-ignored
-  changes are committed, including pre-existing user changes.
-- Sensitive files get a two-layer gate before the commit (obvious secret names
-  are unstaged by name; a model screens a clipped diff and can flag more).
-  Excluded files stay uncommitted in the worktree and are not named in the
+- Runs `git add -A` every turn: all tracked/untracked, non-ignored changes are
+  committed, including pre-existing user changes. Review `.gitignore` before
+  enabling.
+- Sensitive files pass a two-layer gate (filename rules plus model screening);
+  excluded files stay uncommitted in the worktree and are omitted from the
   commit message. This is not a security boundary.
-- It uses `--no-verify`, disables GPG signing, and skips
+- Uses `--no-verify`, disables GPG signing, and skips
   merge/rebase/conflict/detached-HEAD states.
-- Default user scope applies to every project; use `--scope workspace` to limit
-  it. Review `.gitignore` before enabling — the hook never commits ignored
-  files.
-- Host-specific caveats — merged Claude settings, `disableAllHooks` /
-  `allowManagedHooksOnly`, workspace trust, and `.zcode/` config being
-  committed when not ignored — are in [safety](references/safety.md).
+- Read [safety](references/safety.md) for host-specific caveats (merged Claude
+  settings, `disableAllHooks` / `allowManagedHooksOnly`, workspace trust, and
+  unignored `.zcode/` config).
 
 ## Reference files
 
