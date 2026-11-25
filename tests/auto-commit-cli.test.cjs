@@ -48,13 +48,15 @@ function baseEnv(extra) {
 }
 
 function cliCase(dir, extra) {
+  const changed = path.join(dir, "changed.bin");
+  fs.writeFileSync(changed, "a.txt\0");
   return baseEnv({
     AUTOCOMMIT_AGENT: "claude",
     AUTOCOMMIT_CLAUDE_BIN: SHIM,
     AUTOCOMMIT_LLM_CONFIG: path.join(dir, "missing-llm.json"),
     AI_STATUS_OUT: path.join(dir, "ai.json"),
     SENSITIVE_OUT: path.join(dir, "sensitive.txt"),
-    CHANGED: "a.txt",
+    CHANGED_FILE: changed,
     ...extra
   });
 }
@@ -132,7 +134,7 @@ test("staged sensitive paths from the CLI response are unstaged", async () => {
 
   assert.strictEqual(res.code, 0, res.stderr);
   const sensitive = fs.readFileSync(path.join(dir, "sensitive.txt"), "utf8").trim();
-  assert.strictEqual(sensitive, "a.txt", "only paths from CHANGED may be written");
+  assert.strictEqual(sensitive, "a.txt", "only staged paths may be written");
 });
 
 test("stdout diagnostics before the JSON envelope are tolerated", async () => {

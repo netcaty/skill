@@ -163,9 +163,7 @@ test("model paths with Windows separators or case resolve to the staged spelling
   const dir = tmp();
   const changed = writeChanged(dir, ["src/Config.ts", "src/other.ts"]);
   const saved = process.env.CHANGED_FILE;
-  const savedChanged = process.env.CHANGED;
   process.env.CHANGED_FILE = changed;
-  delete process.env.CHANGED;
   try {
     const { collectSensitive } = require(HELPER);
     const reported = process.platform === "win32"
@@ -179,8 +177,6 @@ test("model paths with Windows separators or case resolve to the staged spelling
   } finally {
     if (saved === undefined) delete process.env.CHANGED_FILE;
     else process.env.CHANGED_FILE = saved;
-    if (savedChanged === undefined) delete process.env.CHANGED;
-    else process.env.CHANGED = savedChanged;
   }
 });
 

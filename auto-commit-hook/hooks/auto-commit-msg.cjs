@@ -9,9 +9,6 @@
 //                                     `git diff --cached --name-only -z`; the
 //                                     exact git spelling, so paths with
 //                                     non-ASCII bytes or spaces still match
-//         CHANGED                     changed file paths, newline separated;
-//                                     fallback for manual runs and tests that
-//                                     do not set CHANGED_FILE
 //         DIFF_FILE                    file holding the staged diff (HEAD vs
 //                                     index, pre-clipped by the shell). Screen
 //                                     input for both the deterministic secret
@@ -252,16 +249,16 @@ function inferTypeFromText(text) {
 }
 
 // Staged paths in their exact git spelling. CHANGED_FILE is NUL separated and
-// therefore survives non-ASCII names, spaces and quotes; the newline-separated
-// CHANGED fallback exists for manual runs and tests.
+// therefore survives non-ASCII names, spaces and quotes; there is no
+// newline-separated fallback because that format cannot represent them.
 function changedFiles() {
   const file = process.env.CHANGED_FILE;
-  if (file) {
-    try {
-      return fs.readFileSync(nativePath(file), "utf8").split("\0").filter(Boolean);
-    } catch {}
+  if (!file) return [];
+  try {
+    return fs.readFileSync(nativePath(file), "utf8").split("\0").filter(Boolean);
+  } catch {
+    return [];
   }
-  return (process.env.CHANGED || "").split(/\r?\n/).filter(Boolean);
 }
 
 function readDiff() {
