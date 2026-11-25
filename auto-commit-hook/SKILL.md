@@ -60,10 +60,6 @@ at runtime; replace them with the resolved values before running a command.
 |---|---|
 | `<skill-dir>` | installed skill directory: `$AUTOCOMMIT_INSTALL_DIR`, default `~/.agents/skills/auto-commit-hook` |
 | `<agent>` | detected host profile id, as printed by `status` and accepted by `--agent` |
-| `<AGENT>` | `<agent>` uppercased; prefixes the host's session environment variables |
-| `<agent-home>` | that host's own config home (one directory per host) |
-| `<hooks-dir>` | `<agent-home>/hooks/auto-commit`, where `install.cjs` copies the hook assets |
-| `<skills-dir>` | `<agent-home>/skills/auto-commit-hook`, the discoverability link some hosts require |
 
 ## Install
 
@@ -100,17 +96,12 @@ Workspace scope resolves the project from the session environment
 (`CODEBUDDY_PROJECT_DIR`, `CLAUDE_PROJECT_DIR`, `ZCODE_PROJECT_DIR`, in that
 order) and falls back to the current directory, so run it from the target repo
 or pass `--project <dir>`. If the resolved project is the skill directory
-itself, the scripts print a warning: `status` reports `not a git repository`
-there, an install would register a workspace hook for the skill checkout, and
-any `safe.directory` hint it prints would not apply.
+itself, the scripts warn that the target must be the repo being checkpointed.
 
 ### Runtime
 
-`run.sh` finds Node without requiring it on `PATH`, in order: `node`,
-`$AUTOCOMMIT_NODE`, the host's bundled runtime, the host app's install
-locations, then common package-manager paths. Electron binaries run with
-`ELECTRON_RUN_AS_NODE=1`; `.cmd`/`.bat` shims are skipped because bash cannot
-exec them. `bash scripts/run.sh --print` shows the chosen runtime, and
+`run.sh` finds Node even when it is not on `PATH`; `AUTOCOMMIT_NODE` pins a
+runtime and `bash scripts/run.sh --print` shows the one chosen.
 `node scripts/<command>.cjs ...` is equivalent where Node is on `PATH`.
 
 ## Status and diagnostics
@@ -134,12 +125,8 @@ What the lines mean:
   `unavailable` (sources checked and why each was empty) or `error` (per-model
   failures). `transport` is `http` or `cli`; `cli` means the local `claude -p`
   login state was used. Diagnostics only; the commit still succeeded.
-- `enabled: true` appears only for hosts whose hook format has an `enabled`
-  flag; command-string hosts report `enabled: (n/a for command hooks)`.
 - `--doctor` also checks the configured bash, host disable flags, git usability
-  (a `safe.directory` fix is suggested only for the ownership case) and, with
-  `--all`, duplicate scope installs.
-- `--update` reports drift; see [Update the installed skill](#update-the-installed-skill).
+  and, with `--all`, duplicate scope installs.
 
 For a failed run, see [troubleshooting](references/troubleshooting.md), which
 also shows how to run the installed hook by hand.
@@ -151,40 +138,34 @@ bash scripts/run.sh disable
 bash scripts/run.sh enable
 ```
 
-`disable` writes a `disabled.json` marker in `<hooks-dir>`; no config is
-rewritten, the registration is kept, and the hook stops on the next Stop.
-`enable` removes the marker and the next Stop commits again. `install`
-preserves a pause; `uninstall` clears it.
+`disable` keeps the registration and pauses commits from the next Stop;
+`enable` resumes them. `install` preserves a pause; `uninstall` clears it.
 
 ## Update the installed skill
 
-Installed copies go stale in two places that refresh independently:
-`<skill-dir>` (staged by `install.sh`; the `<skills-dir>` link follows it) and
-`<hooks-dir>` (copied by `install.cjs`). `status --update` hashes both and
-reports drift; `--json` adds an `update` object to every result.
+Two copies refresh independently: the skill directory and the hook assets.
+`status --update` reports drift between them and the source checkout.
 
 ```bash
 bash scripts/run.sh status --update
-bash scripts/run.sh status --update --source /path/to/skill-checkout   # when no .source.json
+bash scripts/run.sh status --update --source /path/to/skill-checkout   # if none was recorded
 ```
 
-The source checkout is remembered in `<skill-dir>/.source.json` (written by
-`install.sh` — local mode records the checkout path, download mode the repo
-URL), so `--source` is usually unnecessary. When no local checkout is recorded,
-the skill-dir comparison is skipped and the download update below applies.
+`--source` is usually unnecessary: `install.sh` records the checkout. Without a
+recorded checkout, the skill-dir comparison is skipped and the download update
+below applies.
 
 Refresh — every step is idempotent; the hook registration is untouched:
 
 1. Refresh the skill directory: run `bash install.sh` from the checkout, or
-   re-run the curl one-liner without one. This also refreshes the
-   `<skills-dir>` links.
+   re-run the curl one-liner without one.
 2. Refresh the hook assets: `bash scripts/run.sh install`.
 3. Re-run `bash scripts/run.sh status --update` and expect `up to date` on both
    lines.
 
-Hook assets take effect on the next Stop (the hook re-reads them every turn);
-updated `SKILL.md`, `references/` and `scripts/` apply to new sessions. A paused
-hook stays paused across `install`; `enable` resumes it.
+Hook assets take effect on the next Stop; updated `SKILL.md`, `references/` and
+`scripts/` apply to new sessions. A paused hook stays paused across `install`;
+`enable` resumes it.
 
 ## Uninstall
 
@@ -196,9 +177,8 @@ bash scripts/run.sh uninstall --agent <agent> --scope workspace --purge
 To stop commits temporarily, use `disable` instead — it leaves the registration
 alone. Uninstall is for removing the registration itself.
 
-`uninstall.cjs` removes only `auto-commit.sh` entries, preserves all other
-hooks, restores `hooks.enabled`, and deletes the config file only if the
-installer created it and nothing else remains. `--purge` also removes the copied
+`uninstall` removes only the auto-commit entries and preserves all other hooks;
+it cleans up the config file it created. `--purge` also removes the copied
 scripts and install state when unreferenced (`backups/` is kept).
 
 ## Commit-message model
@@ -211,10 +191,9 @@ outrank the saved config. With no model source at all, commits still happen
 with heuristic messages.
 
 On Claude Code, when the session has no provider env and no saved config, the
-helper runs the installed `claude -p` with the CLI's own login (including
-subscription OAuth) — it never reads credentials files or the Keychain. The
-child runs outside the repository with hooks disabled, and always asks for
-`--model haiku` (fixed; `AUTOCOMMIT_LLM_MODEL` does not affect this path).
+message uses the installed `claude` CLI's own login (including subscription
+OAuth); it never reads credentials files or the Keychain. The model is fixed to
+`haiku`, and `AUTOCOMMIT_LLM_MODEL` does not affect this path.
 
 The file is user-managed: never ask for an API key in the conversation and never
 run a command that takes it as an argument. Give the user the path and this
@@ -339,9 +318,8 @@ anything else. Below, `install`, `status`, `disable` and so on are
 - Sensitive files get a two-layer gate before the commit (obvious secret names
   are unstaged by name; a model screens a clipped diff and can flag more), and
   every exclusion is listed in the commit body. This is not a security boundary.
-- It uses `--no-verify`, disables GPG signing, skips merge/rebase/conflict/
-  detached-HEAD states, serializes concurrent Stops on
-  `<git-dir>/auto-commit.lock`, and skips `stop_hook_active: true` re-entries.
+- It uses `--no-verify`, disables GPG signing, and skips
+  merge/rebase/conflict/detached-HEAD states.
 - Default user scope applies to every project; use `--scope workspace` to limit
   it. Review `.gitignore` before enabling — the hook never commits ignored
   files.

@@ -83,9 +83,9 @@ git -C /path/to/repo log -1
 - **Config parse error**: the installer refuses to edit invalid JSON. Fix the file or
   pass `--config <file>`.
 - **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
-  against a real `.workbuddy/settings.json`). Other agents: the hook scripts are
-  agent-agnostic — pass `--config <path>` if the target uses ZCode's
-  `hooks.events` schema, or extend `lib.cjs` with another branch.
+  against a real `.workbuddy/settings.json`). For other agents, the hook scripts
+  are agent-agnostic — pass `--config <path>` if the target uses ZCode's
+  `hooks.events` schema.
 - **Claude Code**: pass `--agent claude` (workspace scope writes
   `.claude/settings.local.json`; user scope writes `~/.claude/settings.json`).
   Message sources, in order: a saved `llm-config.json` / `AUTOCOMMIT_LLM_*`; the
