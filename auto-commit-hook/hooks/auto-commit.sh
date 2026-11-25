@@ -7,7 +7,10 @@
 # unavailable. The model source follows the detected agent, exported to the
 # helper as AUTOCOMMIT_AGENT: WorkBuddy/CodeBuddy use the per-session
 # WORKBUDDY_VLM_* environment endpoint, ZCode reads provider_config.json, and
-# Claude Code uses the session's ANTHROPIC_* endpoint/model environment.
+# Claude Code uses the session's ANTHROPIC_* endpoint/model environment, or
+# falls back to the installed `claude -p` (its own login) when no endpoint is
+# configured. A child launched that way sets AUTOCOMMIT_IN_HOOK=1; the guard
+# below turns its Stop event into a no-op.
 # Sensitive files: obvious secret names are unstaged by name (layer 1), and the
 # helper may flag more from the staged diff (layer 2); every excluded path is
 # listed in the commit body. A path that cannot be unstaged aborts the commit
@@ -53,6 +56,14 @@ script_dir=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)
 # registration stays in the agent config, so pausing needs no settings rewrite
 # and resuming takes effect on the next Stop. Exit before any git or state work.
 [ -e "$script_dir/disabled.json" ] && exit 0
+
+# --- Recursion guard ---------------------------------------------------------
+# The message helper runs `claude -p` for the claude fallback with this marker
+# in its environment. If that child fires a Stop event, the guard stops it
+# before any git or state work. The child also gets --settings with
+# disableAllHooks, and the parent still holds auto-commit.lock while the child
+# runs; either one alone would be enough in normal operation.
+[ -n "${AUTOCOMMIT_IN_HOOK:-}" ] && exit 0
 
 # --- Host agent -------------------------------------------------------------
 # Every desktop agent exports its own environment-variable prefix, so the host

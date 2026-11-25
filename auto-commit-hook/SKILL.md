@@ -66,6 +66,8 @@ All optional:
 | `AUTOCOMMIT_NO_AI=1` | skip the model call; use a heuristic message |
 | `AUTOCOMMIT_LLM_URL` / `_KEY` / `_MODEL` | override the saved LLM config |
 | `AUTOCOMMIT_LLM_CONFIG` | alternate `llm-config.json` path |
+| `AUTOCOMMIT_CLAUDE_BIN` | explicit `claude` executable for the CLI fallback (default: `CLAUDE_CODE_EXECPATH`, then `PATH`) |
+| `AUTOCOMMIT_AI_TIMEOUT_MS` / `_TOTAL_MS` | per-model / overall model budget; defaults are 8000/13000 ms over HTTP and 18000/20000 ms for the `claude -p` fallback |
 | `AUTOCOMMIT_SOURCE_DIR` | source checkout for `status --update` |
 | `AUTOCOMMIT_NO_SKILL_LINK=1` | skip the `<skills-dir>` link in `install.sh` |
 | `CODEBUDDY_PROJECT_DIR` / `CLAUDE_PROJECT_DIR` / `ZCODE_PROJECT_DIR` | session project used by workspace scope, in that order |
@@ -166,7 +168,8 @@ What the lines mean:
 - `disabled: yes` — paused, not uninstalled. `run.sh enable` resumes it.
 - `ai:` — how the message was produced: `ok`, `disabled`, `skipped`,
   `unavailable` (sources checked and why each was empty) or `error` (per-model
-  failures). Diagnostics only; the commit still succeeded.
+  failures). `transport` is `http` or `cli`; `cli` means the local `claude -p`
+  login state was used. Diagnostics only; the commit still succeeded.
 - `enabled: true` appears only for hosts whose hook format has an `enabled`
   flag; command-string hosts report `enabled: (n/a for command hooks)`.
 - `--doctor` also checks the configured bash, host disable flags, git usability
@@ -243,6 +246,15 @@ By default the message uses the host's session provider. A saved config at
 `AUTOCOMMIT_LLM_CONFIG`) outranks it, and `AUTOCOMMIT_LLM_*` env overrides
 outrank the saved config. With no model source at all, commits still happen
 with heuristic messages.
+
+On Claude Code, when the session has no `ANTHROPIC_BASE_URL` + token/key and no
+saved config, the helper runs the installed `claude -p` and lets the CLI use its
+own login (including subscription OAuth). The hook never reads credentials files
+or the Keychain, and does not use `--bare` (which refuses OAuth). The child runs
+in a temporary directory with all hooks disabled through an added settings
+layer, tools off where supported, and `AUTOCOMMIT_IN_HOOK=1`; it never touches
+the repository. `AUTOCOMMIT_LLM_MODEL` pins its model; otherwise the CLI default
+is used.
 
 The file is user-managed: never ask for an API key in the conversation and never
 run a command that takes it as an argument. Give the user the path and this
@@ -355,6 +367,10 @@ anything else. Below, `install`, `status`, `disable` and so on are
   again; `No manual LLM config to clear` means there was nothing to remove.
 - Whenever a saved config is involved, mention that it outranks the session
   provider.
+- When `ai` shows `transport: cli`, say the message came from the local Claude
+  Code login state. If the attempt says `Not logged in`, the commit still
+  succeeded with a heuristic message; after the user logs in again, the next
+  turn retries automatically.
 
 ## Safety
 

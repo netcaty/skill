@@ -30,6 +30,13 @@ The full behaviour list behind the short summary in `SKILL.md`.
   cover completed turns only. The check is field-driven and applies to every
   agent that reports the field (Claude Code, WorkBuddy, ...); hosts that omit
   it are unaffected.
+- On Claude Code without a usable endpoint, the message helper runs `claude -p`.
+  That child runs in the OS temp directory with all hooks disabled through an
+  added settings layer and tools off where supported; session markers are
+  removed and `AUTOCOMMIT_IN_HOOK=1` is set, so a Stop event it fires exits
+  before any git work. The hook itself never reads
+  `~/.claude/.credentials.json` or the Keychain — authentication is the CLI's
+  own.
 - Workspace config lives under `.zcode/`. If that directory is not ignored, the
   auto-commit hook will commit the config file itself.
 - Claude Code merges hooks from user settings, project `settings.json` and

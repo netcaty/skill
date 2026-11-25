@@ -73,6 +73,9 @@ git -C /path/to/repo log -1
   user-set and never used for selection); its `api.type` decides request style and
   auth (`anthropic-messages` and `openai-chat-completions` both supported), and
   models are tried in the rule's `modelOrder` order.
+  On Claude Code the `checked` list may also say
+  `claude-cli: claude executable not found...`; an `error` attempt from that
+  fallback shows `Not logged in`, `exit N` or `timeout after ... ms`.
 - **Double commits**: installed in both scopes; uninstall one. On Claude Code
   also check both project files (`settings.json` and `settings.local.json`) —
   every merged copy runs; remove an old one with
@@ -85,14 +88,22 @@ git -C /path/to/repo log -1
   `hooks.events` schema, or extend `lib.cjs` with another branch.
 - **Claude Code**: pass `--agent claude` (workspace scope writes
   `.claude/settings.local.json`; user scope writes `~/.claude/settings.json`).
-  The commit-message model comes from the session's `ANTHROPIC_BASE_URL` +
-  `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` and, in order, `ANTHROPIC_MODEL`,
-  `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`,
-  then the ids in `CLAUDE_CODE_MODEL_CAPABILITIES`; a saved `llm-config.json`
-  or `AUTOCOMMIT_LLM_*` outranks them. Without any model source commits still
-  happen but with heuristic messages; the `ai:` line names the sources that
-  were checked. If nothing commits, check that
-  the project is trusted, no merged settings file sets `disableAllHooks` /
+  Message sources, in order: a saved `llm-config.json` / `AUTOCOMMIT_LLM_*`; the
+  session's `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`
+  (models from `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+  `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`, then
+  `CLAUDE_CODE_MODEL_CAPABILITIES`); and, when neither is usable, `claude -p`
+  with the CLI's own login. The hook never reads credential files or the
+  Keychain, and does not use `--bare` (it refuses OAuth). The `ai:` line shows
+  `transport: http|cli` plus the sources checked.
+  The CLI child runs in a temporary cwd; `--settings` disables all hooks and
+  `AUTOCOMMIT_IN_HOOK=1` makes any Stop it fires exit before git work, so a
+  nested commit cannot happen. If an `ai:` attempt says `Not logged in`, run
+  `/login` in Claude Code and let the next turn retry — the commit already
+  succeeded with heuristics. For a slow CLI, pin `AUTOCOMMIT_LLM_MODEL=haiku`
+  or raise `AUTOCOMMIT_AI_TOTAL_MS` (keep it below the hook timeout; the
+  installer's default is 30 s). If nothing commits, check that the project is
+  trusted, no merged settings file sets `disableAllHooks` /
   `allowManagedHooksOnly` (`status --doctor` reports them), and the registered
   bash path still exists.
 - **Mixed agents**: the hook scripts detect their host at runtime (env-var

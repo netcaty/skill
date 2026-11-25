@@ -156,6 +156,7 @@ function printAi(ai) {
   const detail = [];
   if (ai.source) detail.push(oneLine(ai.source, 40));
   else if (ai.agent) detail.push("agent " + oneLine(ai.agent, 40));
+  if (ai.transport) detail.push(oneLine(ai.transport, 20));
   if (ai.model) detail.push(oneLine(ai.model, 60));
   if (typeof ai.ms === "number") detail.push(ai.ms + " ms");
   const suffix = detail.length ? " (" + detail.join(", ") + ")" : "";
@@ -177,6 +178,7 @@ function printAi(ai) {
     const parts = [];
     if (attempt.model) parts.push(oneLine(attempt.model, 60) + ":");
     parts.push(oneLine(attempt.error || "ok", 200));
+    if (typeof attempt.code === "number") parts.push("exit " + attempt.code);
     if (typeof attempt.ms === "number") parts.push("(" + attempt.ms + " ms)");
     console.log("           " + parts.join(" "));
   }
