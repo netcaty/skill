@@ -23,11 +23,12 @@ The full behaviour list behind the short summary in `SKILL.md`.
   exact, NUL-separated git output, so non-ASCII names are neither quoted nor
   lost, and
   a path is reported as excluded only after `git diff --cached` confirms it
-  left the index. Every excluded path is listed in the commit body under
-  `⚠ excluded from this commit (sensitive)`. This is not a security boundary:
-  the content scan recognizes known formats only, a secret carried through a
-  pure rename is not re-scanned, and flagged paths are always resolved against
-  the real staged list, so a hallucinated path can never unstage anything.
+  left the index. Excluded paths are not named in the commit message; they
+  remain visible as uncommitted files in the worktree. This is not a security
+  boundary: the content scan recognizes known formats only, a secret carried
+  through a pure rename is not re-scanned, and flagged paths are always
+  resolved against the real staged list, so a hallucinated path can never
+  unstage anything.
 - It uses `--no-verify` and disables GPG signing for that commit.
 - The hook can be paused without editing any agent config: `run.sh disable`
   writes a `disabled.json` marker into the asset directory and the script exits

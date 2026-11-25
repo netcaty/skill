@@ -288,7 +288,7 @@ function runHook(repo, state) {
   });
 }
 
-test("hook excludes a non-ASCII secret name and keeps claiming it", () => {
+test("hook excludes a non-ASCII secret name without naming it in the message", () => {
   const repo = initRepo();
   fs.mkdirSync(path.join(repo, "中文"));
   fs.writeFileSync(path.join(repo, "中文", ".env"), "TOKEN=abc\n");
@@ -306,7 +306,8 @@ test("hook excludes a non-ASCII secret name and keeps claiming it", () => {
   assert.match(worktree, /中文\/\.env/, "the excluded file stays in the worktree");
 
   const body = git(repo, ["log", "-1", "--format=%B"]).stdout;
-  assert.match(body, /中文\/\.env/, "the exclusion is reported in the commit body");
+  assert.ok(!body.includes("中文/.env"), "the excluded path must not appear in the message");
+  assert.ok(!/excluded|sensitive/i.test(body), "the message must not mention the gate");
 });
 
 test("hook unstages a content-level secret when no model runs", () => {
@@ -323,5 +324,7 @@ test("hook unstages a content-level secret when no model runs", () => {
     "a file with a high-confidence secret must not be committed");
 
   const body = git(repo, ["log", "-1", "--format=%B"]).stdout;
-  assert.match(body, /settings\.txt/);
+  assert.ok(!body.includes("settings.txt"),
+    "the excluded path must not appear in the message");
+  assert.ok(!/excluded|sensitive/i.test(body), "the message must not mention the gate");
 });

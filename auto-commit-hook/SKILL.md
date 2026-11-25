@@ -316,8 +316,9 @@ anything else. Below, `install`, `status`, `disable` and so on are
 - The hook runs `git add -A` every turn: all tracked/untracked, non-ignored
   changes are committed, including pre-existing user changes.
 - Sensitive files get a two-layer gate before the commit (obvious secret names
-  are unstaged by name; a model screens a clipped diff and can flag more), and
-  every exclusion is listed in the commit body. This is not a security boundary.
+  are unstaged by name; a model screens a clipped diff and can flag more).
+  Excluded files stay uncommitted in the worktree and are not named in the
+  commit message. This is not a security boundary.
 - It uses `--no-verify`, disables GPG signing, and skips
   merge/rebase/conflict/detached-HEAD states.
 - Default user scope applies to every project; use `--scope workspace` to limit

@@ -13,9 +13,10 @@
 # below turns its Stop event into a no-op.
 # Sensitive files: obvious secret names are unstaged by name (layer 1); layer 2
 # adds a deterministic scan of the staged diff for known secret formats plus
-# optional model judgement, and it keeps working when no model runs. Every
-# excluded path is listed in the commit body, and a path that cannot be
-# unstaged aborts the commit instead of being committed.
+# optional model judgement, and it keeps working when no model runs. Excluded
+# paths are not mentioned in the commit message (last-run.json records the
+# count), and a path that cannot be unstaged aborts the commit instead of
+# being committed.
 # Failures: the hook always exits 0, but real failures (git add/commit, the
 # sensitive gate, missing git) update last-run.json and append to a lazily
 # created, bounded auto-commit.log under the state directory, and status.cjs
@@ -254,14 +255,12 @@ fi
 # deterministic pass unstages obvious secret files by name (covers new files
 # too, since they are already staged at this point); layer 2 below adds a
 # deterministic content scan and lets the helper screen the staged diff with
-# the model. Excluded paths are listed in the commit body so the checkpoint
-# stays auditable. GIT_LITERAL_PATHSPECS keeps file names with glob
-# metacharacters from matching more than themselves.
+# the model. Exclusions stay out of the commit message. GIT_LITERAL_PATHSPECS
+# keeps file names with glob metacharacters from matching more than themselves.
 #
 # Paths come from `-z` output: git's default C-style quoting turns a non-ASCII
 # name into an escaped, quoted string that neither the regexes nor `git reset`
 # can match, so such a secret file used to slip through silently.
-sensitive_exclude=""
 gate_failed=""
 
 # `git reset` exits 0 even when the pathspec matched nothing, so confirm the
@@ -284,9 +283,7 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   if ! unstage_path "$f"; then
     gate_failed="$gate_failed$f"$'\n'
-    continue
   fi
-  sensitive_exclude="$sensitive_exclude$f"$'\n'
 done <<EOF
 $sensitive_names
 EOF
@@ -457,16 +454,14 @@ fi
 
 # Layer 2 results: the deterministic content-scan hits plus whatever the model
 # flagged (the helper resolves every path against the exact staged list, so a
-# hallucinated path cannot unstage anything), then note every exclusion in the
-# commit body. The helper writes this file even when the model never ran.
+# hallucinated path cannot unstage anything). The helper writes this file even
+# when the model never ran. Exclusions stay out of the commit message.
 while IFS= read -r f; do
   f=$(printf '%s' "$f" | tr -d '\r')
   [ -n "$f" ] || continue
   if ! unstage_path "$f"; then
     gate_failed="$gate_failed$f"$'\n'
-    continue
   fi
-  sensitive_exclude="$sensitive_exclude$f"$'\n'
 done < "$sensitive_out"
 # If the sensitive gate cannot unstage a flagged path, committing anyway would
 # leak it. Abort, unstage everything, and surface the failure instead.
@@ -476,14 +471,11 @@ if [ -n "$gate_failed" ]; then
   rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
   exit 0
 fi
-if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
-  git diff --cached --quiet 2>/dev/null && { rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"; exit 0; }
-  {
-    printf '\n'
-    printf '%s\n' "⚠ excluded from this commit (sensitive):"
-    printf '%s\n' "$sensitive_exclude" | sed '/^$/d; s/^/- /'
-  } >> "$msgfile"
-fi
+# If layer 2 left nothing staged, there is nothing to commit.
+git diff --cached --quiet 2>/dev/null && {
+  rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
+  exit 0
+}
 
 commit_output=$(git -c commit.gpgsign=false commit -F "$msgfile" --no-verify 2>&1)
 commit_status=$?

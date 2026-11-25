@@ -1237,9 +1237,9 @@ function buildMessagePrompt(text) {
 }
 
 // Screening prompt: staged paths plus a compact added-lines view, with a
-// recall-biased policy. A false positive costs one file in a checkpoint (the
-// commit body lists it); a false negative leaks a secret. The whitelist bounds
-// what a wrong answer can unstage, so "when in doubt, flag it" is safe.
+// recall-biased policy. A false positive costs one file in a checkpoint; a
+// false negative leaks a secret. The whitelist bounds what a wrong answer can
+// unstage, so "when in doubt, flag it" is safe.
 function buildScreenPrompt() {
   const files = promptFileList(200);
   const view = addedLinesView(readDiff());
