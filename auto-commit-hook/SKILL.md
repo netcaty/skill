@@ -72,8 +72,7 @@ testing; see [troubleshooting](references/troubleshooting.md).
 ## Conventions
 
 This document is host-neutral. Placeholders stand for values the scripts resolve
-at runtime; replace them with the resolved values before running a command. The
-concrete per-host table lives in [install internals](references/install-internals.md).
+at runtime; replace them with the resolved values before running a command.
 
 | placeholder | meaning |
 |---|---|
@@ -263,8 +262,7 @@ bash scripts/run.sh setup-llm --clear    # remove the file
 ```
 
 `setup-llm --url/--key/--model` is for scripted setups only; do not use it to
-collect a key from the user. Per-host sources are listed in
-[install internals](references/install-internals.md).
+collect a key from the user.
 
 ## What to tell the user
 
@@ -390,10 +388,6 @@ its `Error:` line and the fix it names before suggesting anything else. Below,
 
 ## Reference files
 
-- [install internals](references/install-internals.md) — what install writes,
-  config paths, hook JSON per agent, commit-message model sources
 - [troubleshooting](references/troubleshooting.md) — failure reporting, manual
   hook runs, common problems
 - [safety](references/safety.md) — complete safety behaviour
-- [adding an agent](references/adding-an-agent.md) — support checklist for a new
-  host

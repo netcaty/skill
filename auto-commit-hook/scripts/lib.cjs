@@ -750,10 +750,8 @@ function installStatusIn(file) {
 // repository's install.sh.
 const UPDATABLE_FILES = [
   "SKILL.md",
-  "references/install-internals.md",
   "references/troubleshooting.md",
   "references/safety.md",
-  "references/adding-an-agent.md",
   "hooks/auto-commit.sh",
   "hooks/auto-commit-msg.cjs",
   "scripts/lib.cjs",

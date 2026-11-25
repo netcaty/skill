@@ -81,8 +81,7 @@ git -C /path/to/repo log -1
 - **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
   against a real `.workbuddy/settings.json`). Other agents: the hook scripts are
   agent-agnostic — pass `--config <path>` if the target uses ZCode's
-  `hooks.events` schema, or extend `lib.cjs` with another branch (see
-  `adding-an-agent.md`).
+  `hooks.events` schema, or extend `lib.cjs` with another branch.
 - **Claude Code**: pass `--agent claude` (workspace scope writes
   `.claude/settings.local.json`; user scope writes `~/.claude/settings.json`).
   The commit-message model comes from the session's `ANTHROPIC_BASE_URL` +

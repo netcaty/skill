@@ -45,7 +45,7 @@ agent 会先请求执行该命令的权限，确认后即完成安装，效果�
 ```
 auto-commit-hook/            ← skill 本体（即安装到 ~/.agents/skills/ 的内容）
 ├── SKILL.md                 ← skill 说明与常用命令
-├── references/              ← 详细文档：安装内部、排错、安全、扩展新 agent
+├── references/              ← 详细文档：排错、安全
 ├── hooks/
 │   ├── auto-commit.sh       ← Stop hook：守卫、暂存、提交，永远 exit 0
 │   └── auto-commit-msg.cjs  ← 把 agent 最终回复转成 Conventional Commits 信息
