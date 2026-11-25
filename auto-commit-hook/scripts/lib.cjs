@@ -746,8 +746,8 @@ function installStatusIn(file) {
 // hashes UPDATABLE_FILES across them and reports which pairs differ.
 // ---------------------------------------------------------------------------
 
-// Everything install.sh stages. Must stay in sync with the FILES list in the
-// repository's install.sh.
+// Everything install.sh stages. The per-file fallback in install.sh lists the
+// same files; keep the two in sync.
 const UPDATABLE_FILES = [
   "SKILL.md",
   "references/environment.md",

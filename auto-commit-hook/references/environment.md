@@ -6,6 +6,10 @@ to the defaults shown.
 | variable | effect |
 |---|---|
 | `AUTOCOMMIT_INSTALL_DIR` | installed skill directory (default `~/.agents/skills/auto-commit-hook`) |
+| `AUTOCOMMIT_INSTALL_FORMAT` | download mode: `archive` (default) or `files` |
+| `AUTOCOMMIT_INSTALL_ARCHIVE` | tarball URL for download mode (default: this repository's `main` archive) |
+| `AUTOCOMMIT_INSTALL_RAW` | base URL for per-file downloads (default: this repository's `main` raw path) |
+| `AUTOCOMMIT_INSTALL_MODE` | force `local` or `download` |
 | `AUTOCOMMIT_NODE` | Node runtime for `run.sh` |
 | `AUTOCOMMIT_BASH` | bash executable registered in the hook |
 | `AUTOCOMMIT_NO_AI=1` | skip the model call; use a heuristic message |

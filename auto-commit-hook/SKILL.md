@@ -76,10 +76,13 @@ curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bas
 ```
 
 The script stages this skill directory at `<skill-dir>` and registers no hook.
-On hosts that scan only their own `skills/` directory it also exposes the staged
-copy at `<skills-dir>` (junction, symlink, or copy as a fallback); set
-`AUTOCOMMIT_NO_SKILL_LINK=1` to skip that. Use a raw.githubusercontent URL —
-piping the github.com page feeds HTML to bash.
+Download mode fetches the repository tarball in one request and falls back to
+per-file downloads when the archive is unavailable
+(`AUTOCOMMIT_INSTALL_FORMAT=files` forces that path). On hosts that scan only
+their own `skills/` directory it also exposes the staged copy at `<skills-dir>`
+(junction, symlink, or copy as a fallback); set `AUTOCOMMIT_NO_SKILL_LINK=1` to
+skip that. Use a raw.githubusercontent URL — piping the github.com page feeds
+HTML to bash.
 
 ### The hook
 

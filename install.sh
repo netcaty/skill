@@ -26,9 +26,11 @@
 # AUTOCOMMIT_NO_SKILL_LINK=1 to skip that.
 #
 # Env overrides (mainly for testing):
-#   AUTOCOMMIT_INSTALL_RAW    base URL files are fetched from (download mode)
-#   AUTOCOMMIT_INSTALL_DIR    where the skill directory is staged
-#   AUTOCOMMIT_INSTALL_MODE   force local|download
+#   AUTOCOMMIT_INSTALL_RAW     base URL for per-file downloads (download mode)
+#   AUTOCOMMIT_INSTALL_ARCHIVE tarball URL for download mode
+#   AUTOCOMMIT_INSTALL_FORMAT  archive (default) or files
+#   AUTOCOMMIT_INSTALL_DIR     where the skill directory is staged
+#   AUTOCOMMIT_INSTALL_MODE    force local|download
 set -euo pipefail
 
 # Git-Bash launchers may start with a Windows-only PATH; coreutils (dirname,
@@ -74,14 +76,59 @@ if [ "$MODE" = local ]; then
 else
   command -v curl >/dev/null 2>&1 \
     || fail "curl not found; install curl or use the git clone method."
-  BASE="$RAW/auto-commit-hook"
-  log "fetching skill files from $BASE"
+
+  # Per-file list for the fallback path; keep in sync with the skill folder.
   FILES="SKILL.md references/environment.md references/troubleshooting.md references/safety.md hooks/auto-commit.sh hooks/auto-commit-msg.cjs scripts/lib.cjs scripts/install.cjs scripts/uninstall.cjs scripts/disable.cjs scripts/enable.cjs scripts/status.cjs scripts/setup-llm.cjs scripts/run.sh"
-  for f in $FILES; do
-    mkdir -p "$SKILL_DIR/$(dirname "$f")"
-    curl -fsSL "$BASE/$f" -o "$SKILL_DIR/$f" || fail "download failed: $BASE/$f"
-    [ -s "$SKILL_DIR/$f" ] || fail "empty download: $f"
-  done
+
+  # One request for the repository tarball; it carries every shipped file, so
+  # this path needs no list. GitHub archives nest everything under a single
+  # top-level <repo>-<ref> directory.
+  fetch_archive() {
+    command -v tar >/dev/null 2>&1 || return 1
+    local url="${AUTOCOMMIT_INSTALL_ARCHIVE:-https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz}"
+    local tmp top="" d
+    tmp=$(mktemp -d 2>/dev/null) || return 1
+    log "fetching $url"
+    if ! curl -fsSL --connect-timeout 10 --max-time 120 "$url" 2>/dev/null \
+      | tar -xz -C "$tmp" 2>/dev/null; then
+      rm -rf "$tmp"
+      return 1
+    fi
+    for d in "$tmp"/*/; do
+      [ -d "$d" ] || continue
+      top=${d%/}
+      break
+    done
+    if [ -z "$top" ] || [ ! -f "$top/auto-commit-hook/SKILL.md" ]; then
+      rm -rf "$tmp"
+      return 1
+    fi
+    cp -R "$top/auto-commit-hook/." "$SKILL_DIR/"
+    rm -rf "$tmp"
+  }
+
+  fetch_files() {
+    local base="$RAW/auto-commit-hook" f
+    log "fetching skill files from $base"
+    for f in $FILES; do
+      mkdir -p "$SKILL_DIR/$(dirname "$f")"
+      curl -fsSL "$base/$f" -o "$SKILL_DIR/$f" || fail "download failed: $base/$f"
+      [ -s "$SKILL_DIR/$f" ] || fail "empty download: $f"
+    done
+  }
+
+  case "${AUTOCOMMIT_INSTALL_FORMAT:-archive}" in
+    archive)
+      if fetch_archive; then
+        log "installed from the repository archive"
+      else
+        log "archive download failed; falling back to per-file downloads"
+        fetch_files
+      fi
+      ;;
+    files) fetch_files ;;
+    *) fail "unknown AUTOCOMMIT_INSTALL_FORMAT (use archive or files)" ;;
+  esac
 fi
 
 # Record where future updates should come from. status.cjs reads this file to
