@@ -19,12 +19,6 @@ gets a Conventional Commits subject and an AI-written body, falling back to
 local heuristics when no model is available; obvious sensitive files are
 excluded, and the hook always exits 0 — it never blocks or fails a turn.
 
-The skill ships two hook scripts:
-
-- `auto-commit.sh` — guards, stages, commits, records the outcome, always exits 0
-- `auto-commit-msg.cjs` — turns the agent's final reply into a commit message and
-  records the attempt under `ai` in `last-run.json`
-
 ## Before you act
 
 Check live state instead of reciting from this file:
@@ -52,7 +46,6 @@ reinstall.
 | `bash` | Git Bash on Windows |
 | `git` | the repository being checkpointed |
 | Node | not required on `PATH`; `run.sh` discovers a runtime (see [Runtime](#runtime)) |
-| model | optional; without one, commits still happen with heuristic messages |
 
 ### Environment overrides
 
@@ -71,9 +64,6 @@ All optional:
 | `AUTOCOMMIT_SOURCE_DIR` | source checkout for `status --update` |
 | `AUTOCOMMIT_NO_SKILL_LINK=1` | skip the `<skills-dir>` link in `install.sh` |
 | `CODEBUDDY_PROJECT_DIR` / `CLAUDE_PROJECT_DIR` / `ZCODE_PROJECT_DIR` | session project used by workspace scope, in that order |
-
-`AUTOCOMMIT_NOTIFY_STDOUT=1` forces the failure-notification JSON channel for
-testing; see [troubleshooting](references/troubleshooting.md).
 
 ## Conventions
 
@@ -100,12 +90,10 @@ curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bas
 ```
 
 The script stages this skill directory at `<skill-dir>` and registers no hook.
-On hosts that scan only their own `skills/` directory, it also exposes the
-staged copy at `<skills-dir>` — a directory junction on Windows, a symlink on
-macOS/Linux, falling back to a copy. A host that reads `<skill-dir>` directly
-needs no link. Set `AUTOCOMMIT_NO_SKILL_LINK=1` to skip it.
-
-Use a raw.githubusercontent URL; piping the github.com page feeds HTML to bash.
+On hosts that scan only their own `skills/` directory it also exposes the staged
+copy at `<skills-dir>` (junction, symlink, or copy as a fallback); set
+`AUTOCOMMIT_NO_SKILL_LINK=1` to skip that. Use a raw.githubusercontent URL —
+piping the github.com page feeds HTML to bash.
 
 ### The hook
 
@@ -120,7 +108,9 @@ curl-only install, use `bash <skill-dir>/scripts/run.sh install`.
   the hook to one repo.
 - The host is auto-detected from the session environment; `--agent <agent>`
   overrides it, e.g. to install for another host from inside a session.
-- `--dry-run` prints the planned change without writing.
+- `--config <file>` and `--timeout <ms>` override the config path and the hook
+  timeout (default 30000 ms); `--dry-run` prints the planned change without
+  writing.
 - Installing both scopes commits twice per turn; `install.cjs` refuses unless
   `--force`.
 
@@ -136,18 +126,12 @@ any `safe.directory` hint it prints would not apply.
 
 ### Runtime
 
-`run.sh` finds Node without requiring it on `PATH`, in order: `node` on `PATH`,
-`$AUTOCOMMIT_NODE`, the host's bundled runtime
-(`$<AGENT>_NODE_FALLBACK_EXEC_PATH`), the host app's install locations
-(`%LOCALAPPDATA%\Programs` on Windows; `/Applications/*.app` and
-`~/Applications` on macOS, with the executable read from Info.plist's
-`CFBundleExecutable`), then scoop, `Program Files\nodejs`, Homebrew and
-`/usr/local/bin`. Electron binaries run with `ELECTRON_RUN_AS_NODE=1`;
-`.cmd`/`.bat` shims are skipped because bash cannot exec them directly.
-
-`bash scripts/run.sh --print` shows the chosen runtime without running a
-command. `node scripts/<command>.cjs ...` is equivalent wherever Node is on
-`PATH`.
+`run.sh` finds Node without requiring it on `PATH`, in order: `node`,
+`$AUTOCOMMIT_NODE`, the host's bundled runtime, the host app's install
+locations, then common package-manager paths. Electron binaries run with
+`ELECTRON_RUN_AS_NODE=1`; `.cmd`/`.bat` shims are skipped because bash cannot
+exec them. `bash scripts/run.sh --print` shows the chosen runtime, and
+`node scripts/<command>.cjs ...` is equivalent where Node is on `PATH`.
 
 ## Status and diagnostics
 
@@ -232,11 +216,10 @@ bash scripts/run.sh uninstall --agent <agent> --scope workspace --purge
 To stop commits temporarily, use `disable` instead — it leaves the registration
 alone. Uninstall is for removing the registration itself.
 
-`uninstall.cjs` removes only entries whose script is `auto-commit.sh`, preserves
-all other hooks, restores the `hooks.enabled` value recorded at install, and
-deletes the config file only if the installer created it and nothing else
-remains. `--purge` also removes the copied scripts and install state when no
-remaining config references them (the `backups/` directory is kept).
+`uninstall.cjs` removes only `auto-commit.sh` entries, preserves all other
+hooks, restores `hooks.enabled`, and deletes the config file only if the
+installer created it and nothing else remains. `--purge` also removes the copied
+scripts and install state when unreferenced (`backups/` is kept).
 
 ## Commit-message model
 
@@ -247,15 +230,11 @@ By default the message uses the host's session provider. A saved config at
 outrank the saved config. With no model source at all, commits still happen
 with heuristic messages.
 
-On Claude Code, when the session has no `ANTHROPIC_BASE_URL` + token/key and no
-saved config, the helper runs the installed `claude -p` and lets the CLI use its
-own login (including subscription OAuth). The hook never reads credentials files
-or the Keychain, and does not use `--bare` (which refuses OAuth). The child runs
-in a temporary directory with all hooks disabled through an added settings
-layer, tools off where supported, and `AUTOCOMMIT_IN_HOOK=1`; it never touches
-the repository. It always asks for `--model haiku` — fixed, not configurable,
-since a commit message does not need a larger model; `AUTOCOMMIT_LLM_MODEL` does
-not affect this path.
+On Claude Code, when the session has no provider env and no saved config, the
+helper runs the installed `claude -p` with the CLI's own login (including
+subscription OAuth) — it never reads credentials files or the Keychain. The
+child runs outside the repository with hooks disabled, and always asks for
+`--model haiku` (fixed; `AUTOCOMMIT_LLM_MODEL` does not affect this path).
 
 The file is user-managed: never ask for an API key in the conversation and never
 run a command that takes it as an argument. Give the user the path and this
@@ -389,29 +368,6 @@ anything else. Below, `install`, `status`, `disable` and so on are
 - Host-specific caveats — merged Claude settings, `disableAllHooks` /
   `allowManagedHooksOnly`, workspace trust, and `.zcode/` config being
   committed when not ignored — are in [safety](references/safety.md).
-
-## Option reference
-
-`scripts/run.sh <command> [options]` runs `scripts/<command>.cjs`; commands are
-`install`, `uninstall`, `disable`, `enable`, `status` and `setup-llm`.
-
-| option | commands | meaning |
-|---|---|---|
-| `--agent <agent>` | install, uninstall, status, disable, enable | override host detection |
-| `--scope` | install, uninstall, status | `user` (default) or `workspace` |
-| `--project <dir>` | install, uninstall, status, disable | workspace root; default session project or cwd |
-| `--config <file>` | install, uninstall | explicit hooks config path |
-| `--timeout <ms>` | install | hook timeout, default 30000 |
-| `--force` | install | install despite another merged config already having the hook |
-| `--dry-run` | install, uninstall, disable, enable | print the planned change without writing |
-| `--purge` | uninstall | remove copied scripts (keeps `backups/`) when unreferenced |
-| `--all` | status | show user and workspace scopes |
-| `--doctor` | status | runtime blockers and git ownership |
-| `--update` | status | drift between installed and source files |
-| `--source <dir>` | status `--update` | checkout path when no `.source.json` |
-| `--json` | all | machine-readable result |
-| `--url`, `--key`, `--model` | setup-llm | endpoint, key and candidate models; `--key` is for scripted setups only |
-| `--show`, `--clear` | setup-llm | print (masked) or remove the saved config |
 
 ## Reference files
 
