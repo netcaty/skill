@@ -5,15 +5,23 @@
 //         when the payload instead carries a transcript_path (Claude Code),
 //         the last assistant text message is extracted from that JSONL
 //         transcript; everything else in the payload is ignored.
-// env   : CHANGED                     changed file paths, newline separated
+// env   : CHANGED_FILE                changed file paths, NUL separated, from
+//                                     `git diff --cached --name-only -z`; the
+//                                     exact git spelling, so paths with
+//                                     non-ASCII bytes or spaces still match
+//         CHANGED                     changed file paths, newline separated;
+//                                     fallback for manual runs and tests that
+//                                     do not set CHANGED_FILE
 //         DIFF_FILE                    file holding the staged diff (HEAD vs
-//                                     index, pre-clipped by the shell); its
-//                                     presence enables the sensitive-content
-//                                     screen described below
+//                                     index, pre-clipped by the shell). Screen
+//                                     input for both the deterministic secret
+//                                     scan below and the model layer
 //         SENSITIVE_OUT                output file: newline-separated staged
-//                                     paths the model flagged as containing
-//                                     sensitive content (written only if any;
-//                                     auto-commit.sh unstages them)
+//                                     paths to unstage. Holds the deterministic
+//                                     content-scan hits plus any path the model
+//                                     flagged; it is written even when the
+//                                     model is disabled, unavailable or fails,
+//                                     so screening never silently disappears
 //         AI_STATUS_OUT                output file: compact JSON describing how
 //                                     the commit message was produced (status
 //                                     ok | disabled | skipped | unavailable |
@@ -243,7 +251,16 @@ function inferTypeFromText(text) {
   return type;
 }
 
+// Staged paths in their exact git spelling. CHANGED_FILE is NUL separated and
+// therefore survives non-ASCII names, spaces and quotes; the newline-separated
+// CHANGED fallback exists for manual runs and tests.
 function changedFiles() {
+  const file = process.env.CHANGED_FILE;
+  if (file) {
+    try {
+      return fs.readFileSync(nativePath(file), "utf8").split("\0").filter(Boolean);
+    } catch {}
+  }
   return (process.env.CHANGED || "").split(/\r?\n/).filter(Boolean);
 }
 
@@ -253,24 +270,152 @@ function readDiff() {
   try { return fs.readFileSync(file, "utf8"); } catch { return ""; }
 }
 
-// Layer 2 of the sensitive gate: paths the model flagged as containing
-// sensitive content. Only paths that are actually staged (present in CHANGED)
-// are accepted, so a hallucinated path can never unstage anything.
-function collectSensitive(obj) {
-  const changed = new Set(changedFiles());
-  const seen = new Set();
-  const out = [];
-  for (const raw of (Array.isArray(obj && obj.sensitiveFiles) ? obj.sensitiveFiles : [])) {
-    const f = String(raw).trim();
-    if (f && changed.has(f) && !seen.has(f)) { seen.add(f); out.push(f); }
+// --- sensitive-content gate, layer 2 ---------------------------------------
+// Two sources feed SENSITIVE_OUT: a deterministic scan of added diff lines
+// (runs even when the model is unavailable) and the model's own judgement.
+// Every reported path is resolved against the exact staged list, so neither a
+// hallucinated path nor a diff header can unstage anything that is not staged.
+const MAX_SENSITIVE = 50;
+
+// Only high-confidence signatures. A deterministic hit unstages a file from
+// every checkpoint, so generic `password = "..."`-style patterns would drop
+// ordinary code and fixtures; judgement calls stay with the model.
+const SENSITIVE_PATTERNS = [
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bASIA[0-9A-Z]{16}\b/,
+  /\bgh[pousr]_[A-Za-z0-9]{36,}\b/,
+  /\bgithub_pat_[A-Za-z0-9_]{22,}\b/,
+  /\bsk-[A-Za-z0-9_-]{20,}\b/,
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  // Credentials in a URL, but not the placeholder passwords docs use
+  // (`user:password@host`). Redis often leaves the user part empty.
+  /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|amqps):\/\/[^\s:@/]*:(?!password\b|passwd\b|secret\b|changeme\b|example\b)[^\s@/]{8,}@/i
+];
+
+// The model may answer with Windows separators, a "./" prefix or different
+// case; git always reports forward slashes and the recorded spelling.
+function normalizeRepoPath(value) {
+  return String(value == null ? "" : value)
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^(?:\.\/)+/, "");
+}
+
+function pathKey(file) {
+  const p = normalizeRepoPath(file);
+  return process.platform === "win32" ? p.toLowerCase() : p;
+}
+
+// Resolve reported paths to the exact staged spelling. Unmatched entries are
+// counted (not echoed into last-run.json) so a separator/case mismatch is
+// visible as a diagnostic instead of looking like "nothing sensitive".
+function matchStaged(values) {
+  const staged = new Map();
+  for (const file of changedFiles()) {
+    const key = pathKey(file);
+    if (!staged.has(key)) staged.set(key, file);
   }
-  return out.slice(0, 10);
+  const seen = new Set();
+  const files = [];
+  const unmatched = [];
+  for (const value of (Array.isArray(values) ? values : [])) {
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) continue;
+    // The path itself wins; a model that saw a rename diff may instead answer
+    // "old -> new", so both sides are tried as a fallback.
+    const arrow = raw.indexOf("->");
+    const candidates = arrow >= 0
+      ? [raw, raw.slice(0, arrow), raw.slice(arrow + 2)]
+      : [raw];
+    let hit = "";
+    for (const candidate of candidates) {
+      hit = staged.get(pathKey(candidate)) || "";
+      if (hit) break;
+    }
+    if (!hit) {
+      if (unmatched.length < 20) unmatched.push(clip(raw, 200));
+      continue;
+    }
+    const key = pathKey(hit);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(hit);
+  }
+  return { files, unmatched };
+}
+
+// Layer 2a (model): paths the model flagged as containing sensitive content.
+function collectSensitive(obj) {
+  return matchStaged(obj && obj.sensitiveFiles);
+}
+
+// Layer 2b (deterministic): scan added lines of the staged diff for known
+// secret formats and attribute each hit to the file header it follows. The
+// diff is generated with core.quotePath=false, so a non-ASCII path matches the
+// staged name byte-for-byte.
+function scanSensitiveDiff(diff) {
+  const hits = [];
+  let current = "";
+  let inHunk = false;
+  let minusHeader = false;
+  for (const line of String(diff || "").split(/\r?\n/)) {
+    if (line.startsWith("diff --git ")) {
+      inHunk = false;
+      minusHeader = false;
+      current = "";
+      continue;
+    }
+    if (!inHunk) {
+      // A `+++` line is a file header only directly after its `---` pair;
+      // added content inside a hunk can itself begin with "+++ ".
+      if (line.startsWith("@@")) { inHunk = true; minusHeader = false; continue; }
+      if (line.startsWith("--- ")) { minusHeader = true; continue; }
+      if (line.startsWith("+++ ") && minusHeader) {
+        const header = line.slice(4).replace(/\t$/, "");
+        current = header === "/dev/null" ? "" : header.replace(/^b\//, "");
+      }
+      minusHeader = false;
+      continue;
+    }
+    if (!current || !line.startsWith("+")) continue;
+    if (SENSITIVE_PATTERNS.some(re => re.test(line))) hits.push(current);
+  }
+  return matchStaged(hits).files;
 }
 
 function writeSensitive(files) {
   const out = process.env.SENSITIVE_OUT;
   if (!out || !files.length) return;
   try { fs.writeFileSync(out, files.join("\n") + "\n", "utf8"); } catch {}
+}
+
+// Merge the deterministic hits with whatever the model reported (modelResult
+// is null when the model was disabled, unavailable, skipped or failed),
+// record the outcome for the diagnostic record, and publish the final list.
+function recordSensitive(modelResult) {
+  const model = modelResult && Array.isArray(modelResult.files) ? modelResult.files : [];
+  const merged = [];
+  const seen = new Set();
+  for (const file of [...localSensitive, ...model]) {
+    const key = pathKey(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(file);
+  }
+  const capped = merged.slice(0, MAX_SENSITIVE);
+  scanState = {
+    screened: modelResult ? "model+local" : "local",
+    local: localSensitive.length,
+    model: model.length,
+    unmatched: modelResult && Array.isArray(modelResult.unmatched)
+      ? modelResult.unmatched.length : 0,
+    truncated: merged.length > MAX_SENSITIVE,
+    excluded: capped.length
+  };
+  writeSensitive(capped);
+  return capped;
 }
 
 // --- AI diagnostics ---------------------------------------------------------
@@ -280,6 +425,13 @@ function writeSensitive(files) {
 // identities, endpoints (query stripped), timings and error messages go in;
 // never API keys, tokens or the model's response text.
 let aiStatusWritten = false;
+
+// Set by main() before the model call: deterministic scan hits and the last
+// screening outcome. writeAiStatus embeds the summary (counts only - never
+// paths or content) so "screened and found nothing" is distinguishable from
+// "never screened" in last-run.json.
+let localSensitive = [];
+let scanState = null;
 
 // Single-line, bounded, secret-scrubbed text for the diagnostic record.
 function clip(value, max) {
@@ -311,9 +463,15 @@ function writeAiStatus(obj) {
   const out = process.env.AI_STATUS_OUT;
   if (!out) return;
   let json;
-  try { json = JSON.stringify(obj); } catch { return; }
+  try {
+    json = JSON.stringify(scanState ? { ...obj, sensitive: scanState } : obj);
+  } catch { return; }
   if (json.length > 4000) {
-    json = JSON.stringify({ status: obj.status, reason: "diagnostic record omitted (too large)" });
+    json = JSON.stringify({
+      status: obj.status,
+      reason: "diagnostic record omitted (too large)",
+      sensitive: scanState || undefined
+    });
   }
   try { fs.writeFileSync(out, json + "\n", "utf8"); } catch {}
 }
@@ -997,7 +1155,13 @@ function buildPrompt(text) {
     '4. 只输出一个 JSON 对象，不要 markdown 代码块：{"type":"fix","subject":"...","body":["..."],"sensitiveFiles":[]}'
   ];
   if (files.length) {
-    prompt.push("", "CHANGED_FILES（本轮暂存的文件路径）:", files.join("\n"));
+    // The prompt lists a bounded subset; the whitelist used to validate the
+    // model's answer still covers every staged path.
+    const listed = files.slice(0, 200);
+    prompt.push("", "CHANGED_FILES（本轮暂存的文件路径）:", listed.join("\n"));
+    if (files.length > listed.length) {
+      prompt.push("…另有 " + (files.length - listed.length) + " 个文件未列出");
+    }
   }
   if (diffClip) {
     prompt.push(
@@ -1081,7 +1245,7 @@ async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs,
               delete attempt.code;
               attempt.ms = Date.now() - attemptStart;
               pushAttempt(attempts, attempt);
-              writeSensitive(collectSensitive(raw));
+              recordSensitive(collectSensitive(raw));
               writeAiStatus({
                 status: "ok",
                 source: provider.source,
@@ -1300,7 +1464,7 @@ async function aiDraft(text, fallback) {
           if (draft) {
             attempt.ms = Date.now() - attemptStart;
             pushAttempt(attempts, attempt);
-            writeSensitive(collectSensitive(parsed));
+            recordSensitive(collectSensitive(parsed));
             writeAiStatus({
               status: "ok",
               source: provider.source,
@@ -1350,6 +1514,11 @@ function formatMessage(draft) {
 async function main() {
   const text = readPayload();
   const fallback = localDraft(text);
+  // The deterministic content screen runs before, and independently of, the
+  // model call: an unavailable, disabled or timed-out model must not turn the
+  // screening off. Its result is published even if nothing else succeeds.
+  localSensitive = scanSensitiveDiff(readDiff());
+  recordSensitive(null);
   const draft = (await aiDraft(text, fallback)) || fallback;
   if (!draft.subject) draft.subject = fallback.subject;
   process.stdout.write(formatMessage(draft));
@@ -1375,5 +1544,6 @@ module.exports = {
   loadWorkbuddyProvider, loadClaudeProvider, loadClaudeCliProvider,
   claudeModelCandidates, CLI_MODEL, findClaudeCli, buildPrompt,
   parseCliEnvelope, runClaudeCli, lastAssistantFromTranscript, readSseText,
-  changedFiles, readDiff, collectSensitive, writeSensitive
+  changedFiles, readDiff, collectSensitive, writeSensitive,
+  scanSensitiveDiff, matchStaged, normalizeRepoPath, MAX_SENSITIVE
 };

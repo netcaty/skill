@@ -11,10 +11,11 @@
 # falls back to the installed `claude -p` (its own login) when no endpoint is
 # configured. A child launched that way sets AUTOCOMMIT_IN_HOOK=1; the guard
 # below turns its Stop event into a no-op.
-# Sensitive files: obvious secret names are unstaged by name (layer 1), and the
-# helper may flag more from the staged diff (layer 2); every excluded path is
-# listed in the commit body. A path that cannot be unstaged aborts the commit
-# instead of being committed.
+# Sensitive files: obvious secret names are unstaged by name (layer 1); layer 2
+# adds a deterministic scan of the staged diff for known secret formats plus
+# optional model judgement, and it keeps working when no model runs. Every
+# excluded path is listed in the commit body, and a path that cannot be
+# unstaged aborts the commit instead of being committed.
 # Failures: the hook always exits 0, but real failures (git add/commit, the
 # sensitive gate, missing git) update last-run.json and append to a lazily
 # created, bounded auto-commit.log under the state directory, and status.cjs
@@ -251,13 +252,27 @@ fi
 # --- sensitive-file gate, layer 1 --------------------------------------------
 # add -A staged everything, including files that must not be committed. This
 # deterministic pass unstages obvious secret files by name (covers new files
-# too, since they are already staged at this point); layer 2 below lets the
-# helper screen the staged diff with the model. Excluded paths are listed in
-# the commit body so the checkpoint stays auditable. GIT_LITERAL_PATHSPECS
-# keeps file names with glob metacharacters from matching more than themselves.
+# too, since they are already staged at this point); layer 2 below adds a
+# deterministic content scan and lets the helper screen the staged diff with
+# the model. Excluded paths are listed in the commit body so the checkpoint
+# stays auditable. GIT_LITERAL_PATHSPECS keeps file names with glob
+# metacharacters from matching more than themselves.
+#
+# Paths come from `-z` output: git's default C-style quoting turns a non-ASCII
+# name into an escaped, quoted string that neither the regexes nor `git reset`
+# can match, so such a secret file used to slip through silently.
 sensitive_exclude=""
 gate_failed=""
-sensitive_names=$(git diff --cached --name-only 2>/dev/null | grep -iE \
+
+# `git reset` exits 0 even when the pathspec matched nothing, so confirm the
+# path actually left the index before reporting it as excluded - otherwise a
+# name git cannot resolve would be listed as excluded while staying staged.
+unstage_path() {
+  GIT_LITERAL_PATHSPECS=1 git reset -q -- "$1" 2>/dev/null || return 1
+  GIT_LITERAL_PATHSPECS=1 git diff --cached --quiet -- "$1" 2>/dev/null
+}
+
+sensitive_names=$(git diff --cached --name-only -z 2>/dev/null | tr '\0' '\n' | grep -iE \
   -e '(^|/)\.env($|\.)' \
   -e '\.(pem|key|p12|pfx|jks|keystore|kdbx)$' \
   -e '(^|/)id_(rsa|dsa|ecdsa|ed25519)($|\.)' \
@@ -267,7 +282,7 @@ sensitive_names=$(git diff --cached --name-only 2>/dev/null | grep -iE \
   | grep -ivE -e '(^|/)\.env\.(example|sample|template|dist|defaults)$' || true)
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  if ! GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null; then
+  if ! unstage_path "$f"; then
     gate_failed="$gate_failed$f"$'\n'
     continue
   fi
@@ -275,8 +290,10 @@ while IFS= read -r f; do
 done <<EOF
 $sensitive_names
 EOF
-changed=$(git diff --cached --name-only 2>/dev/null | head -n 200)
-file_count=$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+# Display copy for the fallback subject (unquoted); the helper gets the exact
+# NUL-separated list through CHANGED_FILE.
+changed=$(git -c core.quotePath=false diff --cached --name-only 2>/dev/null | head -n 200)
+file_count=$(git diff --cached --name-only -z 2>/dev/null | tr -cd '\000' | wc -c | tr -d ' ')
 [ "$file_count" -gt 0 ] || exit 0  # every staged change was excluded
 
 helper="$script_dir/auto-commit-msg.cjs"
@@ -388,12 +405,18 @@ msgfile=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a t
 difffile=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile"; exit 0; }
 sensitive_out=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile"; exit 0; }
 ai_status=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile" "$sensitive_out"; exit 0; }
-# Layer 2 input: the staged diff (HEAD vs index) for the model to screen; the
-# shell caps it at 20 KB and the helper clips again. Empty diff (binary-only
-# stages) simply skips the content screen.
-git diff --cached --no-color --no-textconv --no-ext-diff 2>/dev/null | head -c 20000 > "$difffile" || true
+changed_file=$(mktemp 2>/dev/null) || { report_failure "temp file" "cannot create a temporary file"; rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"; exit 0; }
+# Exact staged paths for the helper: NUL separated and unquoted, so names with
+# non-ASCII bytes, spaces or quotes match what `git reset` expects.
+git diff --cached --name-only -z 2>/dev/null > "$changed_file" || true
+# Layer 2 input: the staged diff (HEAD vs index). The 256 KB cap bounds the
+# helper's deterministic scan; the model prompt is clipped again inside the
+# helper. An empty diff (binary-only stages) simply has nothing to scan.
+# core.quotePath=false keeps non-ASCII paths in the +++ headers raw, so a hit
+# resolves against the exact staged name.
+git -c core.quotePath=false diff --cached --no-color --no-textconv --no-ext-diff 2>/dev/null | head -c 262144 > "$difffile" || true
 if [ -n "$runtime" ] && [ -f "$helper" ]; then
-  printf '%s' "$hook_input" | CHANGED="$changed" DIFF_FILE="$difffile" SENSITIVE_OUT="$sensitive_out" AI_STATUS_OUT="$ai_status" ELECTRON_RUN_AS_NODE=1 "$runtime" "$helper" > "$msgfile" 2>/dev/null
+  printf '%s' "$hook_input" | CHANGED_FILE="$changed_file" DIFF_FILE="$difffile" SENSITIVE_OUT="$sensitive_out" AI_STATUS_OUT="$ai_status" ELECTRON_RUN_AS_NODE=1 "$runtime" "$helper" > "$msgfile" 2>/dev/null
 elif [ -z "$runtime" ]; then
   printf '%s\n' '{"status":"unavailable","reason":"no JavaScript runtime found (node/Electron)"}' > "$ai_status"
 else
@@ -432,13 +455,14 @@ if [ -s "$ai_status" ]; then
   esac
 fi
 
-# Layer 2 results: unstage what the model flagged (the helper already matched
-# every reported path against the staged CHANGED list, so a hallucinated path
-# cannot unstage anything), then note every exclusion in the commit body.
+# Layer 2 results: the deterministic content-scan hits plus whatever the model
+# flagged (the helper resolves every path against the exact staged list, so a
+# hallucinated path cannot unstage anything), then note every exclusion in the
+# commit body. The helper writes this file even when the model never ran.
 while IFS= read -r f; do
   f=$(printf '%s' "$f" | tr -d '\r')
   [ -n "$f" ] || continue
-  if ! GIT_LITERAL_PATHSPECS=1 git reset -q -- "$f" 2>/dev/null; then
+  if ! unstage_path "$f"; then
     gate_failed="$gate_failed$f"$'\n'
     continue
   fi
@@ -449,11 +473,11 @@ done < "$sensitive_out"
 if [ -n "$gate_failed" ]; then
   report_failure "sensitive gate" "could not unstage: $(printf '%s' "$gate_failed" | tr '\n' ' ')" "$ai_field"
   git reset -q >/dev/null 2>&1 || true
-  rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"
+  rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
   exit 0
 fi
 if [ -n "$(printf '%s' "$sensitive_exclude" | tr -d '[:space:]')" ]; then
-  git diff --cached --quiet 2>/dev/null && { rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"; exit 0; }
+  git diff --cached --quiet 2>/dev/null && { rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"; exit 0; }
   {
     printf '\n'
     printf '%s\n' "⚠ excluded from this commit (sensitive):"
@@ -474,5 +498,5 @@ else
       ;;
   esac
 fi
-rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status"
+rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
 exit 0

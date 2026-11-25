@@ -150,6 +150,19 @@ function oneLine(value, max) {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
+// The gate summary from the helper: which screen actually ran, how many paths
+// it excluded, and whether anything was dropped because a reported path did
+// not resolve against the staged list or the cap was hit.
+function printSensitive(ai) {
+  const s = ai && ai.sensitive;
+  if (!s || typeof s !== "object") return;
+  const parts = [s.screened === "model+local" ? "local+model" : "local only"];
+  parts.push((Number(s.excluded) || 0) + " excluded");
+  if (Number(s.unmatched)) parts.push(Number(s.unmatched) + " unmatched path(s)");
+  if (s.truncated) parts.push("truncated at the exclusion cap");
+  console.log("  sensitive: " + parts.join(", "));
+}
+
 function printAi(ai) {
   if (!ai || typeof ai !== "object") return;
   const status = String(ai.status || "?");
@@ -162,11 +175,13 @@ function printAi(ai) {
   const suffix = detail.length ? " (" + detail.join(", ") + ")" : "";
   if (status === "ok") {
     console.log("  ai     : ok" + suffix);
+    printSensitive(ai);
     return;
   }
   const label = status === "error" ? "FAILED" : status;
   const reason = ai.reason ? " - " + oneLine(ai.reason, 200) : "";
   console.log("  ai     : " + label + reason + suffix);
+  printSensitive(ai);
   for (const item of (Array.isArray(ai.checked) ? ai.checked : []).slice(0, 5)) {
     if (!item || typeof item !== "object") continue;
     console.log("           " + (item.source ? oneLine(item.source, 40) + ": " : "") +

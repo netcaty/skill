@@ -8,13 +8,24 @@ The full behaviour list behind the short summary in `SKILL.md`.
   unstages obvious secret names — `.env*` (except `.env.example`-style), key/cert
   extensions (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`),
   `id_rsa`-style SSH keys, `credentials*`/`secrets*` data files, service-account
-  JSON, and `.npmrc`/`.pypirc`/`.netrc`. Layer 2 (best-effort) screens a clipped
-  staged diff with the same model call that writes the commit message and can
-  flag more paths. Every excluded path is listed in the commit body under
+  JSON, and `.npmrc`/`.pypirc`/`.netrc`. Layer 2 has a deterministic half that
+  scans the staged diff's added lines for high-confidence secret formats
+  (private-key blocks, AWS/GitHub/OpenAI/Slack/Google token shapes,
+  credentials-in-URL) and a best-effort half that asks the same model call that
+  writes the commit message to flag more paths. The deterministic half runs
+  whenever the helper runs, including with `AUTOCOMMIT_NO_AI=1`, when the model
+  is unavailable or times out, and when the agent reply is empty; only the
+  model half can be absent (and a missing JavaScript runtime leaves just
+  layer 1). The `ai` record in `last-run.json` says which screen ran and how
+  many paths it excluded (`status` prints it). Staged paths are exchanged as
+  exact, NUL-separated git output, so non-ASCII names are neither quoted nor
+  lost, and
+  a path is reported as excluded only after `git diff --cached` confirms it
+  left the index. Every excluded path is listed in the commit body under
   `⚠ excluded from this commit (sensitive)`. This is not a security boundary:
-  an unavailable model leaves only layer 1 (`AUTOCOMMIT_NO_AI=1` also disables
-  layer 2), and flagged paths are always matched against the real staged list,
-  so a hallucinated path can never unstage anything.
+  the content scan recognizes known formats only, a secret carried through a
+  pure rename is not re-scanned, and flagged paths are always resolved against
+  the real staged list, so a hallucinated path can never unstage anything.
 - It uses `--no-verify` and disables GPG signing for that commit.
 - The hook can be paused without editing any agent config: `run.sh disable`
   writes a `disabled.json` marker into the asset directory and the script exits
