@@ -271,11 +271,12 @@ collect a key from the user.
 ## What to tell the user
 
 Report in the user's terms — scope, whether the registration was kept, and when
-a change takes effect — and offer the matching dialog phrases instead of raw
-script commands. Ground every report in the lines the command just printed;
-never claim a state `status` has not shown. If a command exits non-zero, quote
-its `Error:` line and the fix it names before suggesting anything else. Below,
-`install`, `status`, `disable` and so on are `bash scripts/run.sh` subcommands.
+a change takes effect. **Run every command yourself; never ask the user to
+execute one manually.** Ground every report in the lines the command just
+printed; never claim a state `status` has not shown. If a command exits
+non-zero, quote its `Error:` line and the fix it names before suggesting
+anything else. Below, `install`, `status`, `disable` and so on are
+`bash scripts/run.sh` subcommands.
 
 ### After install
 
