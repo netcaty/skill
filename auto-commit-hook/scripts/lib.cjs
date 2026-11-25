@@ -672,10 +672,25 @@ function readPause(agent) {
   }
 }
 
+// ISO 8601 in local time with its UTC offset (e.g. 2026-11-25T21:49:20+08:00).
+// toISOString() is always UTC, which reads hours off from the user's clock.
+// Keep in sync with iso_now() in hooks/auto-commit.sh.
+function isoLocal(date) {
+  const d = date || new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const offset = -d.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const abs = Math.abs(offset);
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" +
+    pad(d.getDate()) + "T" + pad(d.getHours()) + ":" +
+    pad(d.getMinutes()) + ":" + pad(d.getSeconds()) +
+    sign + pad(Math.floor(abs / 60)) + ":" + pad(abs % 60);
+}
+
 function writePause(agent, extra) {
   const file = pauseFile(agent);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const data = Object.assign({ at: new Date().toISOString(), agent }, extra || {});
+  const data = Object.assign({ at: isoLocal(), agent }, extra || {});
   fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
   return data;
 }
@@ -1157,6 +1172,7 @@ module.exports = {
   readState,
   writeState,
   readLastRun,
+  isoLocal,
   pauseFile,
   readPause,
   writePause,

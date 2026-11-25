@@ -137,9 +137,24 @@ case "${AUTOCOMMIT_NOTIFY_STDOUT:-}" in
   0) notify_stdout=0 ;;
 esac
 
+# ISO 8601 timestamp in local time with its UTC offset, e.g.
+# 2026-11-25T21:49:20+08:00. `date -u` alone would read hours off from the
+# clock the user sees; keep the offset so the value stays unambiguous.
+iso_now() {
+  local ts
+  ts=$(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || true)
+  case "$ts" in
+    *[+-][0-9][0-9][0-9][0-9])
+      ts=$(printf '%s' "$ts" | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/') ;;
+    "")
+      ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true) ;;
+  esac
+  printf '%s' "$ts"
+}
+
 record_run() {
   local status=$1 stage=${2:-} detail=${3:-} ai=${4:-} json ts
-  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true)
+  ts=$(iso_now)
   if [ "$status" = "ok" ]; then
     json=$(printf '{"at":"%s","status":"ok","agent":"%s"%s}' "$ts" "$agent" "$ai")
   else
@@ -152,7 +167,7 @@ record_run() {
 
 report_failure() {
   local stage=$1 detail=$2 ai=${3:-} ts msg
-  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date 2>/dev/null || true)
+  ts=$(iso_now)
   msg=$(json_escape "$detail")
   printf '%s [%s] %s: %s\n' "$ts" "$agent" "$stage" "$msg" >> "$log_file" 2>/dev/null || true
   if [ -f "$log_file" ]; then

@@ -9,7 +9,11 @@ of band instead of aborting:
   file that could not be unstaged) overwrites `last-run.json` and appends to
   `auto-commit.log` in the agent's asset directory. The log is created lazily
   on the first failure; a successful commit only overwrites `last-run.json`
-  with `status: "ok"`, so a healthy install usually has no log file.
+  with `status: "ok"`, so a healthy install usually has no log file. Timestamps
+  (`at` here, `since` in the pause marker, and each log line) are ISO 8601 in
+  the machine's local time with its numeric UTC offset, e.g.
+  `2026-11-25T21:49:20+08:00`; no conversion is needed when comparing them with
+  the clock or with host/provider logs.
 - `status` prints that state: `last run: FAILED <time> (<stage>) <detail>`
   plus the log path; `--json` exposes the same object as `lastRun`.
 - Claude Code additionally receives a non-blocking stdout payload

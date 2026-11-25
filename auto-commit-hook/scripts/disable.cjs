@@ -33,7 +33,7 @@ function main() {
   const hooked = lib.hookedConfigs(opts, lib.readState(opts.agent));
   const data = existing ||
     (opts.dryRun
-      ? { at: new Date().toISOString(), agent: opts.agent }
+      ? { at: lib.isoLocal(), agent: opts.agent }
       : lib.writePause(opts.agent, {}));
 
   const result = {
