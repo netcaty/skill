@@ -9,7 +9,7 @@ description: >-
   automatic commits are not happening.
   Trigger phrases: enable / pause / resume / disable auto-commit; install,
   uninstall, update, or upgrade the hook or skill; view hook status; set,
-  show, or clear the LLM config.
+  show, or clear the hook config (config.json).
 ---
 
 # Auto-commit hook
@@ -134,30 +134,44 @@ unreferenced (`backups/` is kept).
 ## Commit-message model
 
 By default, commit messages use the host's session provider; on Claude Code with
-no provider env or saved config, it falls back to the local `claude` CLI login
-(`haiku`). A saved `<skill-dir>/llm-config.json` outranks the session provider
-(env overrides in [environment](references/environment.md) outrank both).
+no provider env or saved endpoint, it falls back to the local `claude` CLI login
+(`haiku`). A saved `<skill-dir>/config.json` can supply a manual endpoint and
+runtime settings; environment variables outrank it per key (see
+[environment](references/environment.md)).
 
 The file is user-managed: never ask for, accept, or print an API key in chat,
-and never pass one as a CLI argument (do not use `setup-llm --url/--key`). Give
-the user `<skill-dir>/llm-config.json` and this format to edit themselves:
+and never pass one as a CLI argument (do not use `config --url/--key`). Give
+the user `<skill-dir>/config.json` and this format to edit themselves:
 
 ```json
 {
   "url": "https://example.com/v1/messages",
   "key": "sk-...",
-  "model": ["glm-5.3-flash", "auto/glm-5.3-flash"]
+  "model": ["glm-5.3-flash", "auto/glm-5.3-flash"],
+  "noAi": false,
+  "claudeBin": "/path/to/claude",
+  "aiTimeoutMs": 8000,
+  "aiTotalMs": 13000,
+  "sourceDir": "/path/to/skill-checkout"
 }
 ```
 
-`url`, `key` and `model` are required. `/v1/messages` uses Anthropic style and
-`/v1/chat/completions` uses OpenAI style; `model` takes a list tried in order (or
-a comma-separated string).
+`url`, `key` and `model` are required together, and only for the manual
+endpoint; a file with only settings (for example `{"noAi": true}`) keeps the
+session provider. `/v1/messages` uses Anthropic style and
+`/v1/chat/completions` uses OpenAI style; `model` takes a list tried in order
+(or a comma-separated string).
 
 ```bash
-bash scripts/run.sh setup-llm --show     # verify; the key is masked
-bash scripts/run.sh setup-llm --clear    # remove the file
+bash scripts/run.sh config --show                   # effective values; key masked
+bash scripts/run.sh config --set aiTimeoutMs=12000  # runtime setting
+bash scripts/run.sh config --unset noAi
+bash scripts/run.sh config --clear                  # remove the whole file
 ```
+
+Legacy `llm-config.json` is no longer read (hard cut). Move its
+`url`/`key`/`model` into `config.json` and delete it; `config --show` warns
+while it still exists.
 
 ## What to tell the user
 
@@ -227,15 +241,17 @@ anything else.
 - Say hook assets take effect on the next Stop, while `SKILL.md`, `references/`
   and `scripts/` changes need a new session.
 
-### For the LLM config
+### For the hook config
 
-- Never guess or reconstruct a masked key printed by `setup-llm --show` (and
-  never request or print an API key in chat).
-- Whenever a saved config is involved, mention that it outranks the host's
-  session provider.
-- When `--show` prints `No manual LLM config saved`, or `--clear` prints
-  `Cleared <file>`, say the host's session provider is used (with `--show`,
-  offer `<skill-dir>/llm-config.json` and its format if needed).
+- Never guess or reconstruct a masked key printed by `config --show` (and never
+  request or print an API key in chat).
+- Whenever a saved manual endpoint is involved, mention that it outranks the
+  host's session provider; environment variables still win per key.
+- When `--show` reports `(session provider)` for url/key/model, say the host's
+  session provider is used (offer `<skill-dir>/config.json` and its format if
+  needed). `--clear` prints `Cleared <file>`.
+- When `--show` warns about a legacy `llm-config.json`, say it is no longer read
+  and the user should move `url`/`key`/`model` into `config.json`.
 - When `ai` shows `transport: cli`, say the message came from the local Claude
   Code login state; if it says `Not logged in`, the commit still succeeded
   with the file-list placeholder and retries automatically once the user logs

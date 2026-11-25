@@ -53,7 +53,7 @@ function cliCase(dir, extra) {
   return baseEnv({
     AUTOCOMMIT_AGENT: "claude",
     AUTOCOMMIT_CLAUDE_BIN: SHIM,
-    AUTOCOMMIT_LLM_CONFIG: path.join(dir, "missing-llm.json"),
+    AUTOCOMMIT_CONFIG: path.join(dir, "missing-config.json"),
     AI_STATUS_OUT: path.join(dir, "ai.json"),
     SENSITIVE_OUT: path.join(dir, "sensitive.txt"),
     CHANGED_FILE: changed,
@@ -267,10 +267,10 @@ test("direct HTTP credentials win over the CLI", async () => {
     "the CLI must not run when an endpoint is configured");
 });
 
-test("saved llm-config outranks the CLI fallback", async () => {
+test("saved config.json outranks the CLI fallback", async () => {
   const dir = tmp();
   const trace = path.join(dir, "trace.json");
-  const cfg = path.join(dir, "llm-config.json");
+  const cfg = path.join(dir, "config.json");
   fs.writeFileSync(cfg, JSON.stringify({
     url: "http://127.0.0.1:1/v1/messages",
     key: "test-key",
@@ -279,7 +279,7 @@ test("saved llm-config outranks the CLI fallback", async () => {
   const env = cliCase(dir, {
     FAKE_MODE: "ok",
     FAKE_TRACE: trace,
-    AUTOCOMMIT_LLM_CONFIG: cfg
+    AUTOCOMMIT_CONFIG: cfg
   });
 
   const res = await runHelper(env,
@@ -291,6 +291,148 @@ test("saved llm-config outranks the CLI fallback", async () => {
   assert.strictEqual(status.transport, "http");
   assert.ok(!fs.existsSync(trace) && !fs.existsSync(trace + ".screen"),
     "the CLI must not run when a manual config exists");
+});
+
+test("config.json settings alone keep the session provider", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ aiTimeoutMs: 1000, aiTotalMs: 2500 }));
+  const trace = path.join(dir, "trace.json");
+  const env = cliCase(dir, {
+    FAKE_MODE: "slow",
+    FAKE_TRACE: trace,
+    AUTOCOMMIT_CONFIG: cfg
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "改了一下" }), 15000);
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  const status = readStatus(dir);
+  assert.strictEqual(status.source, "claude", "settings must not become a manual endpoint");
+  assert.strictEqual(status.transport, "cli");
+  assert.match(status.attempts[0].error, /timeout after 1000 ms/);
+  assert.ok(fs.existsSync(trace), "the session CLI fallback must still run");
+});
+
+test("config.json noAi disables both model calls", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ noAi: true }));
+  const trace = path.join(dir, "trace.json");
+  const env = cliCase(dir, {
+    FAKE_MODE: "ok",
+    FAKE_TRACE: trace,
+    AUTOCOMMIT_CONFIG: cfg
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了问题" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.strictEqual(res.stdout, "");
+  const status = readStatus(dir);
+  assert.strictEqual(status.status, "disabled");
+  assert.match(status.reason, /config\.json noAi=true/);
+  assert.ok(!fs.existsSync(trace) && !fs.existsSync(trace + ".screen"),
+    "no model call should run when noAi is set in config.json");
+});
+
+test("AUTOCOMMIT_NO_AI=0 overrides config.json noAi", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ noAi: true }));
+  const env = cliCase(dir, {
+    FAKE_MODE: "ok",
+    AUTOCOMMIT_CONFIG: cfg,
+    AUTOCOMMIT_NO_AI: "0"
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了问题" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  const status = readStatus(dir);
+  assert.strictEqual(status.status, "ok", "the explicit env false must win over the file");
+});
+
+test("AUTOCOMMIT_AI_TIMEOUT_MS overrides config.json aiTimeoutMs", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ aiTimeoutMs: 5000, aiTotalMs: 6000 }));
+  const env = cliCase(dir, {
+    FAKE_MODE: "slow",
+    AUTOCOMMIT_CONFIG: cfg,
+    AUTOCOMMIT_AI_TIMEOUT_MS: "1000",
+    AUTOCOMMIT_AI_TOTAL_MS: "2500"
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "改了一下" }), 15000);
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.match(readStatus(dir).attempts[0].error, /timeout after 1000 ms/);
+});
+
+test("malformed config.json values fail open", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({
+    aiTimeoutMs: "abc",
+    noAi: "yes",
+    claudeBin: 5
+  }));
+  const env = cliCase(dir, {
+    FAKE_MODE: "ok",
+    AUTOCOMMIT_CONFIG: cfg
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了问题" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.match(res.stdout, /^fix: /, "the env-supplied CLI must still produce a message");
+  assert.strictEqual(readStatus(dir).status, "ok");
+});
+
+test("legacy llm-config.json is not read", async () => {
+  const dir = tmp();
+  const legacy = path.join(dir, "llm-config.json");
+  fs.writeFileSync(legacy, JSON.stringify({
+    url: "http://127.0.0.1:1/v1/messages",
+    key: "test-key",
+    model: ["test-model"]
+  }));
+  const trace = path.join(dir, "trace.json");
+  const env = cliCase(dir, {
+    FAKE_MODE: "ok",
+    FAKE_TRACE: trace,
+    AUTOCOMMIT_LLM_CONFIG: legacy,
+    AUTOCOMMIT_CONFIG: path.join(dir, "missing-config.json")
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了问题" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  const status = readStatus(dir);
+  assert.strictEqual(status.source, "claude", "the legacy file must be ignored");
+  assert.strictEqual(status.transport, "cli");
+  assert.ok(fs.existsSync(trace), "the session CLI fallback must run");
+});
+
+test("the hook never writes config.json", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ aiTimeoutMs: 2000, aiTotalMs: 3000 }));
+  const before = fs.readFileSync(cfg);
+  const env = cliCase(dir, { FAKE_MODE: "ok", AUTOCOMMIT_CONFIG: cfg });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了问题" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.deepStrictEqual(fs.readFileSync(cfg), before, "config.json must stay read-only");
 });
 
 test("AUTOCOMMIT_NO_AI disables the fallback", async () => {

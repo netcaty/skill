@@ -82,14 +82,21 @@ git -C /path/to/repo log -1
   every merged copy runs; remove an old one with
   `--config .claude/settings.json`.
 - **Config parse error**: the installer refuses to edit invalid JSON. Fix the file or
-  pass `--config <file>`.
+  pass `--config <file>`. For the runtime file, `config --show` reports an
+  unreadable `config.json`; fix or rewrite it with `config --clear` followed by
+  `config --url/--key/--model`.
+- **Legacy LLM config ignored**: `llm-config.json` is no longer read (hard cut).
+  `bash scripts/run.sh config --show` warns while it exists; move its
+  `url`/`key`/`model` into `config.json` with
+  `config --url ... --key ... --model ...`, then delete the old file.
 - **WorkBuddy / other agents**: pass `--agent workbuddy` (config format verified
   against a real `.workbuddy/settings.json`). For other agents, the hook scripts
   are agent-agnostic — pass `--config <path>` if the target uses ZCode's
   `hooks.events` schema.
 - **Claude Code**: pass `--agent claude` (workspace scope writes
   `.claude/settings.local.json`; user scope writes `~/.claude/settings.json`).
-  Message sources, in order: a saved `llm-config.json` / `AUTOCOMMIT_LLM_*`; the
+  Message sources, in order: a complete manual endpoint in `config.json`
+  (`url` + `key` + `model`) with `AUTOCOMMIT_LLM_*` env overrides on top; the
   session's `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`
   (models from `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
   `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`, then

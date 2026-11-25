@@ -53,9 +53,10 @@
 //                                     (or, for unknown agents, when the other
 //                                     sources are unavailable). There is no
 //                                     provider config file on the Claude Code
-//                                     side. Without these (or the manual
-//                                     llm-config.json) the claude path falls
-//                                     back to the local `claude -p` below.
+//                                     side. Without these (or a complete
+//                                     manual endpoint in config.json) the
+//                                     claude path falls back to the local
+//                                     `claude -p` below.
 //         claude -p fallback          when no direct endpoint credentials exist,
 //                                     the helper runs the installed Claude Code
 //                                     CLI and lets it authenticate from its own
@@ -79,8 +80,11 @@
 //                                     the DEFAULT_* mappings and the
 //                                     capabilities list, never ANTHROPIC_MODEL
 //                                     itself
-//         AUTOCOMMIT_NO_AI=1           disable both model calls (the
-//                                     deterministic content scan still runs)
+//         AUTOCOMMIT_CONFIG            alternate config.json path
+//         AUTOCOMMIT_NO_AI             disable both model calls (the
+//                                     deterministic content scan still runs);
+//                                     1/true/yes/on disable, 0/false/no/off
+//                                     explicitly enable and override config
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
 //         AUTOCOMMIT_LLM_MODEL         comma-separated candidate models; default
@@ -91,13 +95,20 @@
 //                                     claude -p fallback, which always uses
 //                                     haiku
 //         AUTOCOMMIT_CLAUDE_BIN        explicit claude executable for the
-//                                     fallback; default is CLAUDE_CODE_EXECPATH,
+//                                     fallback; default is config.json
+//                                     claudeBin, then CLAUDE_CODE_EXECPATH,
 //                                     then a PATH lookup
 //         AUTOCOMMIT_AI_TIMEOUT_MS     per-model timeout, per call (default 8000
 //                                     over HTTP, 18000 for claude -p)
 //         AUTOCOMMIT_AI_TOTAL_MS       budget per call (default 13000 over HTTP,
 //                                     20000 for claude -p); the call runs in
 //                                     parallel with the other one
+//
+// config.json (written by scripts/config.cjs, read-only here) carries the same
+// runtime settings as flat keys — url, key, model, noAi, claudeBin,
+// aiTimeoutMs, aiTotalMs — and each environment variable above outranks its
+// config key. A complete url+key+model trio is the manual endpoint; the other
+// keys are settings only and never change which provider is selected.
 // stdout: the commit message text, or nothing when no model produced a usable
 //         draft; auto-commit.sh then writes the file-list fallback ("chore:
 //         update ...") from the index left after both exclusion layers.
@@ -145,6 +156,167 @@ const CLI_ENV_DROP = [
   "ELECTRON_RUN_AS_NODE",
   "WORKBUDDY_VLM_AUTH_TOKEN", "WORKBUDDY_VLM_CONTEXT"
 ];
+
+// ---------------------------------------------------------------------------
+// User configuration — <skill-dir>/config.json. Read-only here: only
+// scripts/config.cjs writes the file. Priority is per key:
+// environment variable > config.json > default/session provider.
+//
+// This script ships standalone (the agent asset dir has no scripts/lib.cjs),
+// so the reader duplicates the one in scripts/lib.cjs on purpose; keep the
+// parsing and validation rules in sync.
+// ---------------------------------------------------------------------------
+const USER_CONFIG_BASENAME = "config.json";
+const USER_CONFIG_MAX_BYTES = 64 * 1024;
+const USER_CONFIG_MS_MIN = 1000;
+const USER_CONFIG_MS_MAX = 3600000;
+
+function userConfigFile() {
+  if (process.env.AUTOCOMMIT_CONFIG) return path.resolve(process.env.AUTOCOMMIT_CONFIG);
+  return path.join(os.homedir(), ".agents", "skills", "auto-commit-hook", USER_CONFIG_BASENAME);
+}
+
+// Never throws. A malformed or unreadable file is treated as absent so the
+// hook fails open.
+function readUserConfig() {
+  const file = userConfigFile();
+  const result = { file, exists: false, data: {}, error: "" };
+  let raw;
+  try {
+    if (fs.statSync(file).size > USER_CONFIG_MAX_BYTES) {
+      result.error = "config.json is larger than 64 KiB: " + file;
+      return result;
+    }
+    raw = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if (err && err.code !== "ENOENT") result.error = "config.json not readable: " + file;
+    return result;
+  }
+  result.exists = true;
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+  if (!raw.trim()) return result;
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    result.error = "config.json is not valid JSON: " + file;
+    return result;
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    result.error = "config.json is not a JSON object: " + file;
+    return result;
+  }
+  result.data = data;
+  return result;
+}
+
+function normalizeModels(value) {
+  const list = Array.isArray(value) ? value : String(value == null ? "" : value).split(",");
+  return list.map(item => String(item).trim()).filter(Boolean);
+}
+
+function normalizeEnvBoolean(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return null;
+  const value = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return null;
+}
+
+function parseMs(value) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= USER_CONFIG_MS_MIN && value <= USER_CONFIG_MS_MAX
+      ? value : null;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const ms = Number(value.trim());
+    return ms >= USER_CONFIG_MS_MIN && ms <= USER_CONFIG_MS_MAX ? ms : null;
+  }
+  return null;
+}
+
+// Resolve every runtime setting once: env > config.json > default/session.
+// Invalid values are skipped with a problem string, never thrown.
+function runtimeSettings() {
+  const read = readUserConfig();
+  const data = read.data || {};
+  const problems = [];
+  if (read.error) problems.push(read.error);
+
+  const envString = name => {
+    const raw = process.env[name];
+    return raw !== undefined && String(raw).trim() ? String(raw).trim() : "";
+  };
+  const cfgString = key =>
+    typeof data[key] === "string" && data[key].trim() ? data[key].trim() : "";
+
+  // Manual endpoint: env overrides win per key; all three are required, and a
+  // settings-only file must not affect the session provider.
+  const url = envString("AUTOCOMMIT_LLM_URL") || cfgString("url");
+  const key = envString("AUTOCOMMIT_LLM_KEY") || cfgString("key");
+  let models = [];
+  const envModel = envString("AUTOCOMMIT_LLM_MODEL");
+  if (envModel) {
+    models = envModel.split(",").map(s => s.trim()).filter(Boolean);
+  } else if (data.model !== undefined) {
+    models = normalizeModels(data.model);
+    if (!models.length) problems.push("config.json model is empty or malformed");
+  }
+  const manualIncomplete = !(url && key && models.length) &&
+    !!(data.url !== undefined || data.key !== undefined || data.model !== undefined);
+  const manual = url && key && models.length
+    ? { url, key, models, kind: /\/messages(\/?)$/i.test(url) ? "zcode-anthropic" : undefined }
+    : null;
+
+  const envNoAi = normalizeEnvBoolean("AUTOCOMMIT_NO_AI");
+  let noAi;
+  if (envNoAi !== null) noAi = { value: envNoAi, source: "env" };
+  else if (typeof data.noAi === "boolean") noAi = { value: data.noAi, source: "config" };
+  else {
+    if (data.noAi !== undefined) problems.push("config.json noAi is not a boolean");
+    noAi = { value: false, source: "default" };
+  }
+
+  const envMs = name => {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return null;
+    const ms = parseMs(raw);
+    if (ms === null) problems.push(name + " is not a valid millisecond budget; ignored");
+    return ms;
+  };
+  const cfgMs = key => {
+    if (data[key] === undefined) return null;
+    const ms = parseMs(data[key]);
+    if (ms === null) {
+      problems.push("config.json " + key + " is not a valid millisecond budget; ignored");
+    }
+    return ms;
+  };
+
+  return {
+    file: read.file,
+    exists: read.exists,
+    error: read.error,
+    problems,
+    manual,
+    manualIncomplete,
+    noAi,
+    claudeBin: envString("AUTOCOMMIT_CLAUDE_BIN") || cfgString("claudeBin"),
+    aiTimeoutMs: envMs("AUTOCOMMIT_AI_TIMEOUT_MS") ?? cfgMs("aiTimeoutMs"),
+    aiTotalMs: envMs("AUTOCOMMIT_AI_TOTAL_MS") ?? cfgMs("aiTotalMs")
+  };
+}
+
+// Null when AI is enabled; otherwise the diagnostic reason. The env reason
+// string stays exactly "AUTOCOMMIT_NO_AI=1" (status output and tests rely on it).
+function noAiReason(settings) {
+  const resolved = settings || runtimeSettings();
+  if (!resolved.noAi.value) return null;
+  return resolved.noAi.source === "env"
+    ? "AUTOCOMMIT_NO_AI=1"
+    : "config.json noAi=true";
+}
 
 // Fallback message source: hosts or versions whose Stop payload omits
 // last_assistant_message point at a JSONL transcript instead. Scan backwards
@@ -571,9 +743,10 @@ function pushAttempt(attempts, attempt) {
   if (attempts.length < 12) attempts.push(attempt);
 }
 
-function loadZcodeProvider(notes) {
-  if (process.env.AUTOCOMMIT_NO_AI === "1") {
-    addNote(notes, "zcode", "AUTOCOMMIT_NO_AI=1");
+function loadZcodeProvider(notes, opts) {
+  const disabled = noAiReason(opts && opts.settings);
+  if (disabled) {
+    addNote(notes, "zcode", disabled);
     return null;
   }
   // The session's own provider config: ZCode injects its path into the hook
@@ -708,14 +881,16 @@ function nativePath(file) {
   return out;
 }
 
-// Where to look for the `claude` executable, in order: an explicit override,
-// the host-provided exec path, PATH, then the usual install locations. Nothing
-// here runs a subprocess; a missing candidate is just skipped.
-function claudeCandidates() {
+// Where to look for the `claude` executable, in order: an explicit env
+// override, config.json claudeBin, the host-provided exec path, PATH, then the
+// usual install locations. Nothing here runs a subprocess; a missing candidate
+// is just skipped.
+function claudeCandidates(settings) {
   const win = process.platform === "win32";
   const out = [];
   const add = p => { const v = nativePath(p); if (v) out.push(v); };
   add(process.env.AUTOCOMMIT_CLAUDE_BIN);
+  if (settings) add(settings.claudeBin);
   add(process.env.CLAUDE_CODE_EXECPATH);
   const names = win ? ["claude.exe", "claude.cmd", "claude.bat"] : ["claude"];
   for (const dir of String(process.env.PATH || "").split(win ? ";" : ":")) {
@@ -738,9 +913,9 @@ function claudeCandidates() {
   return out;
 }
 
-function findClaudeCli() {
+function findClaudeCli(settings) {
   const seen = new Set();
-  for (const file of claudeCandidates()) {
+  for (const file of claudeCandidates(settings)) {
     const key = process.platform === "win32" ? file.toLowerCase() : file;
     if (!file || seen.has(key)) continue;
     seen.add(key);
@@ -765,19 +940,21 @@ function findClaudeCli() {
 // does not know.
 const CLI_MODEL = "haiku";
 
-function loadClaudeCliProvider(notes) {
-  if (process.env.AUTOCOMMIT_NO_AI === "1") {
-    addNote(notes, "claude-cli", "AUTOCOMMIT_NO_AI=1");
+function loadClaudeCliProvider(notes, settings) {
+  const disabled = noAiReason(settings);
+  if (disabled) {
+    addNote(notes, "claude-cli", disabled);
     return null;
   }
   if (process.env.AUTOCOMMIT_IN_HOOK === "1") {
     addNote(notes, "claude-cli", "recursion guard AUTOCOMMIT_IN_HOOK=1");
     return null;
   }
-  const cli = findClaudeCli();
+  const cli = findClaudeCli(settings);
   if (!cli) {
     addNote(notes, "claude-cli",
-      "claude executable not found (AUTOCOMMIT_CLAUDE_BIN / CLAUDE_CODE_EXECPATH / PATH)");
+      "claude executable not found (AUTOCOMMIT_CLAUDE_BIN / config.json claudeBin / " +
+      "CLAUDE_CODE_EXECPATH / PATH)");
     return null;
   }
   return { kind: "claude-cli", cli, models: [CLI_MODEL] };
@@ -787,7 +964,7 @@ function loadClaudeCliProvider(notes) {
 // Anthropic endpoint arrives through the standard ANTHROPIC_* environment
 // (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY); the
 // request style is the same /v1/messages call the zcode-anthropic path uses.
-// An explicit AUTOCOMMIT_LLM_URL/_KEY override follows the llm-config.json
+// An explicit AUTOCOMMIT_LLM_URL/_KEY override follows the config.json
 // contract instead (URL used verbatim, request style from its shape).
 // With no endpoint at all, the caller may allow the claude -p fallback, which
 // reuses the CLI's own login; a base URL without a key is a misconfiguration,
@@ -798,7 +975,7 @@ function loadClaudeProvider(notes, opts) {
   const base = process.env.AUTOCOMMIT_LLM_URL || process.env.ANTHROPIC_BASE_URL;
   if (!key || !base) {
     if (opts && opts.allowCli && !base) {
-      const cli = loadClaudeCliProvider(notes);
+      const cli = loadClaudeCliProvider(notes, opts.settings);
       if (cli) return cli;
     }
     const missing = [];
@@ -826,37 +1003,24 @@ function loadClaudeProvider(notes, opts) {
   return { url, key, models: candidates, kind };
 }
 
-// Manual endpoint saved by scripts/setup-llm.cjs (llm-config.json). An
-// explicit user choice, so it outranks the session-derived providers; the
-// AUTOCOMMIT_LLM_* env overrides (test escape hatch) still win on top of it.
-// Request style follows the URL shape: .../v1/messages -> anthropic.
-function loadManualProvider(notes) {
-  const file = process.env.AUTOCOMMIT_LLM_CONFIG ||
-    path.join(os.homedir(), ".agents", "skills", "auto-commit-hook", "llm-config.json");
-  let raw;
-  try { raw = fs.readFileSync(file, "utf8"); } catch {
-    addNote(notes, "manual", "no readable llm-config.json: " + file);
-    return null;
+// Manual endpoint from config.json (written by scripts/config.cjs). An
+// explicit user choice, so a complete url+key+model trio outranks the
+// session-derived providers; AUTOCOMMIT_LLM_* env overrides win per key and
+// are already folded into settings.manual. Request style follows the URL
+// shape: .../v1/messages -> anthropic. A settings-only file (no endpoint) is
+// silent; a partial endpoint records one diagnostic and falls back.
+function loadManualProvider(notes, settings) {
+  const resolved = settings || runtimeSettings();
+  if (resolved.manual) {
+    return { ...resolved.manual, source: "manual" };
   }
-  let cfg;
-  try { cfg = JSON.parse(raw); } catch {
-    addNote(notes, "manual", "llm-config.json is not valid JSON: " + file);
-    return null;
+  for (const problem of resolved.problems) addNote(notes, "manual", problem);
+  if (resolved.manualIncomplete) {
+    addNote(notes, "manual",
+      "config.json has an incomplete manual endpoint (need url, key and model): " +
+      resolved.file);
   }
-  if (!cfg || typeof cfg !== "object") {
-    addNote(notes, "manual", "llm-config.json is not an object: " + file);
-    return null;
-  }
-  const url = String(cfg.url || "").trim();
-  const key = String(cfg.key || "").trim();
-  const models = (Array.isArray(cfg.model) ? cfg.model : String(cfg.model || "").split(","))
-    .map(s => String(s).trim()).filter(Boolean);
-  if (!url || !key || !models.length) {
-    addNote(notes, "manual", "llm-config.json is missing url, key or model: " + file);
-    return null;
-  }
-  const kind = /\/messages(\/?)$/i.test(url) ? "zcode-anthropic" : undefined;
-  return { url, key, models, kind };
+  return null;
 }
 
 // Commit-message model sources per agent — the runtime mirror of the
@@ -873,39 +1037,31 @@ const MODEL_SOURCES = {
 const MODEL_SOURCE_ALIASES = { codebuddy: "workbuddy" };
 const UNKNOWN_SOURCE_ORDER = ["claude", "workbuddy", "zcode"];
 
-// Resolution order for the message model: the manual config saved by
-// scripts/setup-llm.cjs first, then the session-derived source for the
-// detected agent (WorkBuddy's loopback proxy from the hook environment,
-// ZCode's provider config from disk, Claude Code's ANTHROPIC_* environment).
-// AUTOCOMMIT_LLM_* env overrides win over everything.
-function loadProvider(notes) {
-  const manual = loadManualProvider(notes);
-  if (manual) {
-    return {
-      ...manual,
-      source: "manual",
-      url: process.env.AUTOCOMMIT_LLM_URL || manual.url,
-      key: process.env.AUTOCOMMIT_LLM_KEY || manual.key,
-      models: process.env.AUTOCOMMIT_LLM_MODEL
-        ? process.env.AUTOCOMMIT_LLM_MODEL.split(",").map(s => s.trim()).filter(Boolean)
-        : manual.models
-    };
-  }
+// Resolution order for the message model: the complete manual endpoint in
+// config.json first, then the session-derived source for the detected agent
+// (WorkBuddy's loopback proxy from the hook environment, ZCode's provider
+// config from disk, Claude Code's ANTHROPIC_* environment). AUTOCOMMIT_LLM_*
+// env overrides win over everything and are folded into settings.manual.
+function loadProvider(notes, settings) {
+  settings = settings || runtimeSettings();
+  const manual = loadManualProvider(notes, settings);
+  if (manual) return manual;
   const agent = String(process.env.AUTOCOMMIT_AGENT || "").toLowerCase();
   const base = agent.split(":")[0];
   const key = MODEL_SOURCES[agent] ? agent : MODEL_SOURCE_ALIASES[base];
   if (key && MODEL_SOURCES[key]) {
-    const provider = MODEL_SOURCES[key](notes, { allowCli: key === "claude" });
+    const provider = MODEL_SOURCES[key](notes,
+      { allowCli: key === "claude", settings });
     return provider ? { ...provider, source: key } : null;
   }
   // Unknown host or manual run: use whichever source is actually available.
   for (const name of UNKNOWN_SOURCE_ORDER) {
-    const provider = MODEL_SOURCES[name](notes);
+    const provider = MODEL_SOURCES[name](notes, { settings });
     if (provider) return { ...provider, source: name };
   }
   // Last resort for an unknown host: the local CLI, which may still be logged
   // in even when no session provider environment is visible.
-  const cli = loadClaudeCliProvider(notes);
+  const cli = loadClaudeCliProvider(notes, settings);
   return cli ? { ...cli, source: "claude" } : null;
 }
 
@@ -1454,14 +1610,14 @@ function validate(obj, fallback) {
   return { type, subject, body };
 }
 
-// Per-task model budget, from the same env knobs as before. Each task gets the
-// full budget; because the two tasks run concurrently, wall-clock stays near
-// one task's budget rather than their sum.
-function modelBudget(isCli, started, maxTokens, unusable) {
-  const perAttemptMs = Number(process.env.AUTOCOMMIT_AI_TIMEOUT_MS ||
-    (isCli ? CLI_ATTEMPT_DEFAULT : 8000));
-  const totalMs = Number(process.env.AUTOCOMMIT_AI_TOTAL_MS ||
-    (isCli ? CLI_TOTAL_DEFAULT : 13000));
+// Per-task model budget: env > config.json > transport default. Each task
+// gets the full budget; because the two tasks run concurrently, wall-clock
+// stays near one task's budget rather than their sum.
+function modelBudget(isCli, started, maxTokens, unusable, settings) {
+  const perAttemptMs = (settings && settings.aiTimeoutMs) ||
+    (isCli ? CLI_ATTEMPT_DEFAULT : 8000);
+  const totalMs = (settings && settings.aiTotalMs) ||
+    (isCli ? CLI_TOTAL_DEFAULT : 13000);
   return {
     perAttemptMs, totalMs, started, maxTokens, unusable,
     deadline: started + totalMs
@@ -1485,9 +1641,10 @@ function runPrompt(provider, prompt, opts, accept) {
 // Message task: the agent's final reply is its only substantive input. A
 // missing or unusable answer prints nothing; the shell hook then writes the
 // file-list placeholder from the index that both exclusion layers left behind.
-async function aiDraft(text) {
-  if (process.env.AUTOCOMMIT_NO_AI === "1") {
-    writeAiStatus({ status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" });
+async function aiDraft(text, settings) {
+  const disabled = noAiReason(settings);
+  if (disabled) {
+    writeAiStatus({ status: "disabled", reason: disabled });
     return null;
   }
   if (!text.trim()) {
@@ -1495,7 +1652,7 @@ async function aiDraft(text) {
     return null;
   }
   const notes = [];
-  const provider = loadProvider(notes);
+  const provider = loadProvider(notes, settings);
   if (!provider) {
     writeAiStatus({
       status: "unavailable",
@@ -1509,7 +1666,7 @@ async function aiDraft(text) {
   const isCli = provider.kind === "claude-cli";
   const started = Date.now();
   const opts = modelBudget(isCli, started, 600,
-    "response was not usable commit JSON");
+    "response was not usable commit JSON", settings);
   const run = await runPrompt(provider, buildMessagePrompt(text), opts,
     raw => validate(raw, { type: "chore" }));
   const base = {
@@ -1535,18 +1692,19 @@ async function aiDraft(text) {
 // added lines, a recall-biased policy, and its own small output budget. It
 // records its outcome itself; a failure here leaves the message task and the
 // deterministic scan untouched.
-async function aiScreen() {
+async function aiScreen(settings) {
   try {
     const started = Date.now();
-    if (process.env.AUTOCOMMIT_NO_AI === "1") {
-      recordSensitive(null, { status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" });
+    const disabled = noAiReason(settings);
+    if (disabled) {
+      recordSensitive(null, { status: "disabled", reason: disabled });
       return;
     }
     if (!changedFiles().length) {
       recordSensitive(null, { status: "skipped", reason: "no staged files" });
       return;
     }
-    const provider = loadProvider([]);
+    const provider = loadProvider([], settings);
     if (!provider) {
       recordSensitive(null, {
         status: "unavailable",
@@ -1556,7 +1714,7 @@ async function aiScreen() {
     }
     const isCli = provider.kind === "claude-cli";
     const opts = modelBudget(isCli, started, 200,
-      "response was not usable screening JSON");
+      "response was not usable screening JSON", settings);
     const run = await runPrompt(provider, buildScreenPrompt(), opts,
       raw => (raw && Array.isArray(raw.sensitiveFiles) ? collectSensitive(raw) : null));
     const base = { transport: isCli ? "cli" : "http", ms: Date.now() - started };
@@ -1589,6 +1747,9 @@ function formatMessage(draft) {
 
 async function main() {
   const text = readPayload();
+  // Resolve env/config once so both model tasks share the same settings and
+  // budget instead of reading the file twice concurrently.
+  const settings = runtimeSettings();
   // The deterministic content screen runs before, and independently of, the
   // model call: an unavailable, disabled or timed-out model must not turn the
   // screening off. Its result is published even if nothing else succeeds.
@@ -1597,8 +1758,8 @@ async function main() {
   // Two independent model calls: the message needs only the agent reply, the
   // screen only the staged paths and added lines. Start the screen first so
   // they overlap; neither can make the other fail.
-  const screen = aiScreen();
-  const draft = await aiDraft(text);
+  const screen = aiScreen(settings);
+  const draft = await aiDraft(text, settings);
   await screen;
   // No draft means no stdout: the shell builds the fallback subject after both
   // exclusion layers, so the message can never name a file the gate removed.
@@ -1624,6 +1785,7 @@ module.exports = {
   formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider,
   loadWorkbuddyProvider, loadClaudeProvider, loadClaudeCliProvider,
   claudeModelCandidates, CLI_MODEL, findClaudeCli,
+  userConfigFile, readUserConfig, runtimeSettings, noAiReason,
   buildMessagePrompt, buildScreenPrompt, addedLinesView, parseDiffAdditions,
   parseCliEnvelope, runClaudeCli, lastAssistantFromTranscript, readSseText,
   changedFiles, readDiff, collectSensitive, writeSensitive,

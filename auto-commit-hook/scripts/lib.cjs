@@ -771,6 +771,255 @@ function skillInstallDir() {
     path.join(os.homedir(), ".agents", "skills", "auto-commit-hook");
 }
 
+// ---------------------------------------------------------------------------
+// User configuration (`<skill-dir>/config.json`), written only by
+// scripts/config.cjs and read here by status/install helpers. This is not the
+// host hook-registration config above (configPath/readConfig). Priority is per
+// key: environment variable > config.json > default/session provider.
+//
+// hooks/auto-commit-msg.cjs ships standalone and has its own copy of this
+// reader; keep the parsing and validation rules in sync.
+// ---------------------------------------------------------------------------
+
+const USER_CONFIG_NAME = "config.json";
+const USER_CONFIG_MAX_BYTES = 64 * 1024;
+const USER_CONFIG_MS_MIN = 1000;
+const USER_CONFIG_MS_MAX = 3600000;
+const USER_CONFIG_SETTABLE_KEYS = ["noAi", "claudeBin", "aiTimeoutMs", "aiTotalMs", "sourceDir"];
+const USER_CONFIG_MS_KEYS = ["aiTimeoutMs", "aiTotalMs"];
+const USER_CONFIG_KNOWN_KEYS = [
+  "url", "key", "model", "noAi", "claudeBin", "aiTimeoutMs", "aiTotalMs",
+  "sourceDir", "savedAt"
+];
+
+function userConfigFile() {
+  if (process.env.AUTOCOMMIT_CONFIG) return path.resolve(process.env.AUTOCOMMIT_CONFIG);
+  return path.join(skillInstallDir(), USER_CONFIG_NAME);
+}
+
+// Legacy files are only existence-checked (never parsed): the rename to
+// config.json is a hard cut, with a migration hint instead of a fallback.
+function legacyConfigFiles() {
+  const canonical = path.join(os.homedir(), ".agents", "skills", "auto-commit-hook",
+    "llm-config.json");
+  const sibling = path.join(path.dirname(userConfigFile()), "llm-config.json");
+  return path.resolve(sibling) === path.resolve(canonical) ? [canonical] : [canonical, sibling];
+}
+
+// Never throws. Returns { file, exists, data, error }. A malformed or
+// unreadable file is treated as absent: the hook fails open.
+function readUserConfig() {
+  const file = userConfigFile();
+  const result = { file, exists: false, data: {}, error: "" };
+  let raw;
+  try {
+    if (fs.statSync(file).size > USER_CONFIG_MAX_BYTES) {
+      result.error = "config.json is larger than 64 KiB: " + file;
+      return result;
+    }
+    raw = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if (err && err.code !== "ENOENT") result.error = "config.json not readable: " + file;
+    return result;
+  }
+  result.exists = true;
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+  if (!raw.trim()) return result;
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    result.error = "config.json is not valid JSON: " + file;
+    return result;
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    result.error = "config.json is not a JSON object: " + file;
+    return result;
+  }
+  result.data = data;
+  return result;
+}
+
+function maskSecret(value) {
+  const key = String(value || "");
+  if (!key) return "";
+  if (key.length <= 8) return "***";
+  return key.slice(0, 3) + "…" + key.slice(-3);
+}
+
+function normalizeModels(value) {
+  const list = Array.isArray(value) ? value : String(value == null ? "" : value).split(",");
+  return list.map(item => String(item).trim()).filter(Boolean);
+}
+
+// Env tri-state for AUTOCOMMIT_NO_AI: true/false are decisive, anything else
+// (including unset) falls through to config.json.
+function normalizeEnvBoolean(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return null;
+  const value = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return null;
+}
+
+function parseMs(value) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= USER_CONFIG_MS_MIN && value <= USER_CONFIG_MS_MAX
+      ? value : null;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const ms = Number(value.trim());
+    return ms >= USER_CONFIG_MS_MIN && ms <= USER_CONFIG_MS_MAX ? ms : null;
+  }
+  return null;
+}
+
+// Parse one `config --set key=value` value. Throws on invalid input: the CLI
+// reports explicit user mistakes, unlike the hook which fails open.
+function validateConfigValue(key, raw) {
+  if (USER_CONFIG_MS_KEYS.includes(key)) {
+    if (!/^\d+$/.test(String(raw).trim())) {
+      throw new Error(key + " must be an integer number of milliseconds");
+    }
+    const ms = Number(String(raw).trim());
+    if (ms < USER_CONFIG_MS_MIN || ms > USER_CONFIG_MS_MAX) {
+      throw new Error(key + " must be between " + USER_CONFIG_MS_MIN + " and " + USER_CONFIG_MS_MAX);
+    }
+    return ms;
+  }
+  if (key === "noAi") {
+    const value = String(raw).trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(value)) return true;
+    if (["false", "0", "no", "off"].includes(value)) return false;
+    throw new Error(key + " must be true or false");
+  }
+  if (key === "claudeBin" || key === "sourceDir") {
+    const value = String(raw).trim();
+    if (!value) throw new Error(key + " must not be empty");
+    return key === "sourceDir" ? path.resolve(value) : value;
+  }
+  if (key === "url" || key === "key" || key === "model") {
+    throw new Error("use --url/--key/--model for " + key +
+      "; secrets are never set through --set");
+  }
+  throw new Error("Unknown config key: " + key +
+    " (settable: " + USER_CONFIG_SETTABLE_KEYS.join(", ") + ")");
+}
+
+function writeUserConfig(data) {
+  const file = userConfigFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + ".tmp-" + process.pid;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  try {
+    fs.renameSync(tmp, file);
+  } catch {
+    try { fs.rmSync(file, { force: true }); } catch {}
+    fs.renameSync(tmp, file);
+  }
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(file, 0o600); } catch {}
+  }
+  return file;
+}
+
+// Read-only view used by `config --show`: per key, the winning value and its
+// source. Never exposes an unmasked key to callers that print it.
+function effectiveConfig() {
+  const read = readUserConfig();
+  const data = read.data || {};
+  const warnings = [];
+  if (read.error) warnings.push(read.error);
+
+  const pickString = (envName, cfgKey) => {
+    const envValue = process.env[envName];
+    if (envValue !== undefined && String(envValue).trim()) {
+      return { value: String(envValue).trim(), source: "env" };
+    }
+    if (typeof data[cfgKey] === "string" && data[cfgKey].trim()) {
+      return { value: data[cfgKey].trim(), source: "config" };
+    }
+    return { value: "", source: "" };
+  };
+
+  const url = pickString("AUTOCOMMIT_LLM_URL", "url");
+  const key = pickString("AUTOCOMMIT_LLM_KEY", "key");
+  let model = { value: [], source: "" };
+  if (process.env.AUTOCOMMIT_LLM_MODEL && process.env.AUTOCOMMIT_LLM_MODEL.trim()) {
+    model = { value: normalizeModels(process.env.AUTOCOMMIT_LLM_MODEL), source: "env" };
+  } else if (data.model !== undefined) {
+    const models = normalizeModels(data.model);
+    if (models.length) model = { value: models, source: "config" };
+    else warnings.push("config.json model is empty or malformed");
+  }
+  const manual = !!(url.value && key.value && model.value.length);
+  if (!manual && (url.value || key.value || model.value.length)) {
+    warnings.push("config.json has an incomplete manual endpoint (need url, key and model); " +
+      "the session provider is used");
+  }
+  if (!manual) {
+    if (!url.source) url.source = "session";
+    if (!key.source) key.source = "session";
+    if (!model.source) model.source = "session";
+  }
+
+  const envNoAi = normalizeEnvBoolean("AUTOCOMMIT_NO_AI");
+  let noAi;
+  if (envNoAi !== null) {
+    noAi = { value: envNoAi, source: "env" };
+  } else if (typeof data.noAi === "boolean") {
+    noAi = { value: data.noAi, source: "config" };
+  } else {
+    if (data.noAi !== undefined) warnings.push("config.json noAi is not a boolean");
+    noAi = { value: false, source: "default" };
+  }
+
+  const claudeBin = pickString("AUTOCOMMIT_CLAUDE_BIN", "claudeBin");
+  if (!claudeBin.source) claudeBin.source = "auto";
+
+  const pickMs = (envName, cfgKey) => {
+    const envValue = process.env[envName];
+    if (envValue !== undefined && envValue !== "") {
+      const parsed = parseMs(envValue);
+      if (parsed !== null) return { value: parsed, source: "env" };
+      warnings.push(envName + " is not a valid millisecond budget; ignored");
+    }
+    if (data[cfgKey] !== undefined) {
+      const parsed = parseMs(data[cfgKey]);
+      if (parsed !== null) return { value: parsed, source: "config" };
+      warnings.push("config.json " + cfgKey + " is not a valid millisecond budget; ignored");
+    }
+    return { value: null, source: "default" };
+  };
+  const aiTimeoutMs = pickMs("AUTOCOMMIT_AI_TIMEOUT_MS", "aiTimeoutMs");
+  const aiTotalMs = pickMs("AUTOCOMMIT_AI_TOTAL_MS", "aiTotalMs");
+
+  const sourceDir = pickString("AUTOCOMMIT_SOURCE_DIR", "sourceDir");
+  if (!sourceDir.source) sourceDir.source = "source-json";
+
+  const legacy = legacyConfigFiles().map(file => ({ path: file, exists: fs.existsSync(file) }));
+  const legacyWarnings = legacy.filter(item => item.exists).map(item =>
+    "legacy llm-config.json is not read: " + item.path +
+    " (move url/key/model into config.json)");
+  if (process.env.AUTOCOMMIT_LLM_CONFIG) {
+    warnings.push("AUTOCOMMIT_LLM_CONFIG is no longer used; set AUTOCOMMIT_CONFIG instead");
+  }
+
+  return {
+    file: read.file,
+    exists: read.exists,
+    error: read.error,
+    data,
+    manual,
+    effective: {
+      url, key, model, noAi, claudeBin, aiTimeoutMs, aiTotalMs, sourceDir
+    },
+    legacy,
+    warnings: warnings.concat(legacyWarnings)
+  };
+}
+
 function hashFile(file) {
   try {
     return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -803,13 +1052,17 @@ function compareDirs(srcDir, dstDir, files) {
 }
 
 // The local checkout to update from: --source flag, AUTOCOMMIT_SOURCE_DIR,
-// then the .source.json install.sh writes (local mode only). Empty string
-// when nothing records a checkout — the caller falls back to SKILL_ROOT or
-// to install.sh's download mode.
+// config.json sourceDir, then the .source.json install.sh writes (local mode
+// only). Empty string when nothing records a checkout — the caller falls back
+// to SKILL_ROOT or to install.sh's download mode.
 function resolveSourceDir(flag) {
   if (flag) return path.resolve(flag);
   if (process.env.AUTOCOMMIT_SOURCE_DIR) {
     return path.resolve(process.env.AUTOCOMMIT_SOURCE_DIR);
+  }
+  const configured = readUserConfig().data.sourceDir;
+  if (typeof configured === "string" && configured.trim()) {
+    return path.resolve(configured);
   }
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(skillInstallDir(), ".source.json"), "utf8"));
@@ -873,6 +1126,19 @@ module.exports = {
   STATE_FILE,
   DEFAULT_TIMEOUT_MS,
   skillInstallDir,
+  userConfigFile,
+  legacyConfigFiles,
+  readUserConfig,
+  maskSecret,
+  normalizeModels,
+  validateConfigValue,
+  writeUserConfig,
+  effectiveConfig,
+  USER_CONFIG_SETTABLE_KEYS,
+  USER_CONFIG_MS_KEYS,
+  USER_CONFIG_KNOWN_KEYS,
+  USER_CONFIG_MS_MIN,
+  USER_CONFIG_MS_MAX,
   hashFile,
   compareDirs,
   resolveSourceDir,

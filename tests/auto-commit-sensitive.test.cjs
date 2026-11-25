@@ -44,7 +44,7 @@ function baseEnv(extra) {
   return {
     ...env,
     AUTOCOMMIT_NO_AI: "1",
-    AUTOCOMMIT_LLM_CONFIG: path.join(WORK, "missing-llm.json"),
+    AUTOCOMMIT_CONFIG: path.join(WORK, "missing-config.json"),
     ...extra
   };
 }
@@ -224,7 +224,7 @@ test("HTTP screening is a separate request with its own budget", async () => {
   try {
     const env = baseEnv({
       AUTOCOMMIT_AGENT: "claude",
-      AUTOCOMMIT_LLM_CONFIG: path.join(dir, "missing-llm.json"),
+      AUTOCOMMIT_CONFIG: path.join(dir, "missing-config.json"),
       AUTOCOMMIT_LLM_URL: "http://127.0.0.1:" + port + "/v1/messages",
       AUTOCOMMIT_LLM_KEY: "test-key",
       AUTOCOMMIT_LLM_MODEL: "test-model",

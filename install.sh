@@ -101,6 +101,20 @@ else
   rm -rf "$TMP"
 fi
 
+# cp -R never deletes extras, and run.sh lists every *.cjs, so a renamed
+# command would otherwise keep appearing as a supported subcommand. Remove
+# only known obsolete command files; user data (llm-config.json, config.json)
+# is never touched.
+for rel in scripts/setup-llm.cjs; do
+  if [ -f "$SKILL_DIR/$rel" ]; then
+    rm -f "$SKILL_DIR/$rel" && log "removed obsolete $rel"
+  fi
+done
+
+if [ -f "$SKILL_DIR/llm-config.json" ]; then
+  log "warning: legacy llm-config.json is no longer read; move url/key/model into config.json"
+fi
+
 # Record where future updates should come from. status.cjs reads this file to
 # find the source checkout when checking the installed copies for drift.
 # cygpath -m keeps the JSON valid on Windows (forward slashes, still accepted

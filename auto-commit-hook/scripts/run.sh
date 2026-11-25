@@ -6,7 +6,7 @@
 #   bash scripts/run.sh disable          # pause, keeping the registration
 #   bash scripts/run.sh enable           # resume after disable
 #   bash scripts/run.sh uninstall --purge
-#   bash scripts/run.sh setup-llm --show
+#   bash scripts/run.sh config --show
 #   bash scripts/run.sh --print        # print the runtime, run nothing
 #
 # `<command>` maps to `scripts/<command>.cjs`; a relative path or a name ending
