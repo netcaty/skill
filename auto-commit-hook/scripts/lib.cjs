@@ -750,6 +750,7 @@ function installStatusIn(file) {
 // repository's install.sh.
 const UPDATABLE_FILES = [
   "SKILL.md",
+  "references/environment.md",
   "references/troubleshooting.md",
   "references/safety.md",
   "hooks/auto-commit.sh",

@@ -49,21 +49,7 @@ reinstall.
 
 ### Environment overrides
 
-All optional:
-
-| variable | effect |
-|---|---|
-| `AUTOCOMMIT_INSTALL_DIR` | installed skill directory (default `~/.agents/skills/auto-commit-hook`) |
-| `AUTOCOMMIT_NODE` | Node runtime for `run.sh` |
-| `AUTOCOMMIT_BASH` | bash executable registered in the hook |
-| `AUTOCOMMIT_NO_AI=1` | skip the model call; use a heuristic message |
-| `AUTOCOMMIT_LLM_URL` / `_KEY` / `_MODEL` | override the saved LLM config |
-| `AUTOCOMMIT_LLM_CONFIG` | alternate `llm-config.json` path |
-| `AUTOCOMMIT_CLAUDE_BIN` | explicit `claude` executable for the CLI fallback (default: `CLAUDE_CODE_EXECPATH`, then `PATH`) |
-| `AUTOCOMMIT_AI_TIMEOUT_MS` / `_TOTAL_MS` | per-model / overall model budget; defaults are 8000/13000 ms over HTTP and 18000/20000 ms for the `claude -p` fallback |
-| `AUTOCOMMIT_SOURCE_DIR` | source checkout for `status --update` |
-| `AUTOCOMMIT_NO_SKILL_LINK=1` | skip the `<skills-dir>` link in `install.sh` |
-| `CODEBUDDY_PROJECT_DIR` / `CLAUDE_PROJECT_DIR` / `ZCODE_PROJECT_DIR` | session project used by workspace scope, in that order |
+All optional — see [environment](references/environment.md).
 
 ## Conventions
 
@@ -371,6 +357,7 @@ anything else. Below, `install`, `status`, `disable` and so on are
 
 ## Reference files
 
+- [environment](references/environment.md) — environment variable overrides
 - [troubleshooting](references/troubleshooting.md) — failure reporting, manual
   hook runs, common problems
 - [safety](references/safety.md) — complete safety behaviour
