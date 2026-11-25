@@ -785,11 +785,13 @@ const USER_CONFIG_NAME = "config.json";
 const USER_CONFIG_MAX_BYTES = 64 * 1024;
 const USER_CONFIG_MS_MIN = 1000;
 const USER_CONFIG_MS_MAX = 3600000;
-const USER_CONFIG_SETTABLE_KEYS = ["noAi", "claudeBin", "aiTimeoutMs", "aiTotalMs", "sourceDir"];
+const USER_CONFIG_SETTABLE_KEYS = [
+  "noAi", "noAiScreen", "claudeBin", "aiTimeoutMs", "aiTotalMs", "sourceDir"
+];
 const USER_CONFIG_MS_KEYS = ["aiTimeoutMs", "aiTotalMs"];
 const USER_CONFIG_KNOWN_KEYS = [
-  "url", "key", "model", "noAi", "claudeBin", "aiTimeoutMs", "aiTotalMs",
-  "sourceDir", "savedAt"
+  "url", "key", "model", "noAi", "noAiScreen", "claudeBin", "aiTimeoutMs",
+  "aiTotalMs", "sourceDir", "savedAt"
 ];
 
 function userConfigFile() {
@@ -879,7 +881,7 @@ function validateConfigValue(key, raw) {
     }
     return ms;
   }
-  if (key === "noAi") {
+  if (key === "noAi" || key === "noAiScreen") {
     const value = String(raw).trim().toLowerCase();
     if (["true", "1", "yes", "on"].includes(value)) return true;
     if (["false", "0", "no", "off"].includes(value)) return false;
@@ -955,16 +957,15 @@ function effectiveConfig() {
     if (!model.source) model.source = "session";
   }
 
-  const envNoAi = normalizeEnvBoolean("AUTOCOMMIT_NO_AI");
-  let noAi;
-  if (envNoAi !== null) {
-    noAi = { value: envNoAi, source: "env" };
-  } else if (typeof data.noAi === "boolean") {
-    noAi = { value: data.noAi, source: "config" };
-  } else {
-    if (data.noAi !== undefined) warnings.push("config.json noAi is not a boolean");
-    noAi = { value: false, source: "default" };
-  }
+  const pickBool = (envName, cfgKey) => {
+    const envValue = normalizeEnvBoolean(envName);
+    if (envValue !== null) return { value: envValue, source: "env" };
+    if (typeof data[cfgKey] === "boolean") return { value: data[cfgKey], source: "config" };
+    if (data[cfgKey] !== undefined) warnings.push("config.json " + cfgKey + " is not a boolean");
+    return { value: false, source: "default" };
+  };
+  const noAi = pickBool("AUTOCOMMIT_NO_AI", "noAi");
+  const noAiScreen = pickBool("AUTOCOMMIT_NO_AI_SCREEN", "noAiScreen");
 
   const claudeBin = pickString("AUTOCOMMIT_CLAUDE_BIN", "claudeBin");
   if (!claudeBin.source) claudeBin.source = "auto";
@@ -996,7 +997,8 @@ function effectiveConfig() {
     data,
     manual,
     effective: {
-      url, key, model, noAi, claudeBin, aiTimeoutMs, aiTotalMs, sourceDir
+      url, key, model, noAi, noAiScreen, claudeBin, aiTimeoutMs, aiTotalMs,
+      sourceDir
     },
     warnings
   };

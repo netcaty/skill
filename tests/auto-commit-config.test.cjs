@@ -98,19 +98,23 @@ test("saving merges existing and unknown keys", () => {
 
 test("--set and --unset apply typed values and preserve the rest", () => {
   const dir = tmp();
-  const set = run(dir, ["--set", "noAi=true", "--set", "aiTimeoutMs=12000",
-    "--set", "claudeBin=/opt/claude", "--set", "sourceDir=."]);
+  const set = run(dir, ["--set", "noAi=true", "--set", "noAiScreen=true",
+    "--set", "aiTimeoutMs=12000", "--set", "claudeBin=/opt/claude",
+    "--set", "sourceDir=."]);
   assert.strictEqual(set.status, 0, set.stderr);
   let data = readConfig(dir);
   assert.strictEqual(data.noAi, true);
+  assert.strictEqual(data.noAiScreen, true);
   assert.strictEqual(data.aiTimeoutMs, 12000);
   assert.strictEqual(data.claudeBin, "/opt/claude");
   assert.strictEqual(data.sourceDir, path.resolve("."));
 
-  const unset = run(dir, ["--unset", "noAi", "--unset", "aiTimeoutMs"]);
+  const unset = run(dir, ["--unset", "noAi", "--unset", "noAiScreen",
+    "--unset", "aiTimeoutMs"]);
   assert.strictEqual(unset.status, 0, unset.stderr);
   data = readConfig(dir);
   assert.ok(!("noAi" in data));
+  assert.ok(!("noAiScreen" in data));
   assert.ok(!("aiTimeoutMs" in data));
   assert.strictEqual(data.claudeBin, "/opt/claude");
 });
@@ -181,25 +185,33 @@ test("hook runtimeSettings resolves env > config and ignores settings-only files
   fs.writeFileSync(configPath(dir), JSON.stringify({
     aiTimeoutMs: 5000,
     aiTotalMs: 6000,
-    noAi: false
+    noAi: false,
+    noAiScreen: true
   }));
-  const keys = ["AUTOCOMMIT_CONFIG", "AUTOCOMMIT_AI_TIMEOUT_MS", "AUTOCOMMIT_NO_AI"];
+  const keys = ["AUTOCOMMIT_CONFIG", "AUTOCOMMIT_AI_TIMEOUT_MS", "AUTOCOMMIT_NO_AI",
+    "AUTOCOMMIT_NO_AI_SCREEN"];
   const saved = {};
   for (const key of keys) saved[key] = process.env[key];
   try {
     process.env.AUTOCOMMIT_CONFIG = configPath(dir);
     process.env.AUTOCOMMIT_AI_TIMEOUT_MS = "1000";
     delete process.env.AUTOCOMMIT_NO_AI;
+    delete process.env.AUTOCOMMIT_NO_AI_SCREEN;
     let settings = helper.runtimeSettings();
     assert.strictEqual(settings.manual, null);
     assert.strictEqual(settings.manualIncomplete, false);
     assert.strictEqual(settings.aiTimeoutMs, 1000);
     assert.strictEqual(settings.aiTotalMs, 6000);
     assert.deepStrictEqual(settings.noAi, { value: false, source: "config" });
+    assert.deepStrictEqual(settings.noAiScreen, { value: true, source: "config" });
+    assert.strictEqual(helper.noAiScreenReason(settings), "config.json noAiScreen=true");
 
     process.env.AUTOCOMMIT_NO_AI = "0";
+    process.env.AUTOCOMMIT_NO_AI_SCREEN = "0";
     settings = helper.runtimeSettings();
     assert.deepStrictEqual(settings.noAi, { value: false, source: "env" });
+    assert.deepStrictEqual(settings.noAiScreen, { value: false, source: "env" });
+    assert.strictEqual(helper.noAiScreenReason(settings), null);
 
     process.env.AUTOCOMMIT_NO_AI = "1";
     assert.strictEqual(helper.noAiReason(helper.runtimeSettings()), "AUTOCOMMIT_NO_AI=1");

@@ -167,6 +167,8 @@ function show(opts) {
     endpointLine("model", info.effective.model.value.join(", ") || "(none)");
   }
   line("noAi", String(info.effective.noAi.value), info.effective.noAi.source);
+  line("noAiScreen", String(info.effective.noAiScreen.value),
+    info.effective.noAiScreen.source);
   line("claudeBin", info.effective.claudeBin.value || "(auto)", info.effective.claudeBin.source);
   const msText = (item, httpDefault, cliDefault) => {
     if (item.value !== null) return String(item.value);
@@ -197,8 +199,8 @@ function main() {
       "  --model <id[,id...]>   candidate model id(s), tried in order",
       "",
       "Runtime settings (file only; never pass a key through --set):",
-      "  --set key=value        one of: noAi, claudeBin, aiTimeoutMs, aiTotalMs,",
-      "                         sourceDir; repeatable",
+      "  --set key=value        one of: noAi, noAiScreen, claudeBin, aiTimeoutMs,",
+      "                         aiTotalMs, sourceDir; repeatable",
       "  --unset key            remove a saved key; repeatable",
       "",
       "Inspect:",

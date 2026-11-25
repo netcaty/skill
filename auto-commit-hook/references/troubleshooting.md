@@ -64,7 +64,9 @@ git -C /path/to/repo log -1
 - **Generic or subject-only message**: no model produced a usable draft, so the
   message is the deterministic file list (`chore: update a.txt, b.txt and N
   more files`), or the helper did not run.
-  `status` prints an `ai:` line: `disabled` means `AUTOCOMMIT_NO_AI=1`,
+  `status` prints an `ai:` line: `disabled` for the message means
+  `AUTOCOMMIT_NO_AI=1` / `noAi` (both model calls off); a `disabled` screen
+  alone can also come from `AUTOCOMMIT_NO_AI_SCREEN` / `noAiScreen`.
   `skipped` means the Stop payload had no final message, `unavailable` lists
   every provider source checked and why it was empty, and `error` lists each
   model's HTTP/network/timeout failure. `last-run.json` has the same object

@@ -17,6 +17,7 @@ use.
 | `key` | `AUTOCOMMIT_LLM_KEY` | session provider | manual endpoint key; masked by `config --show` |
 | `model` | `AUTOCOMMIT_LLM_MODEL` | provider/session model | env comma list; file array or comma string, tried in order |
 | `noAi` | `AUTOCOMMIT_NO_AI` | `false` | skip both model calls; `1/true/yes/on` disable, `0/false/no/off` explicitly enable and override the file |
+| `noAiScreen` | `AUTOCOMMIT_NO_AI_SCREEN` | `false` | skip only the model sensitive-content screen; commit messages stay model-generated and the deterministic scan still runs |
 | `claudeBin` | `AUTOCOMMIT_CLAUDE_BIN` | `CLAUDE_CODE_EXECPATH`, then `PATH` | explicit `claude` executable for the CLI fallback |
 | `aiTimeoutMs` | `AUTOCOMMIT_AI_TIMEOUT_MS` | 8000 HTTP / 18000 CLI | per-model, per-call budget (1000–3600000 ms) |
 | `aiTotalMs` | `AUTOCOMMIT_AI_TOTAL_MS` | 13000 HTTP / 20000 CLI | budget per model task (1000–3600000 ms) |

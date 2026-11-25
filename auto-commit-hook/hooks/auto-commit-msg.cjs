@@ -85,6 +85,9 @@
 //                                     deterministic content scan still runs);
 //                                     1/true/yes/on disable, 0/false/no/off
 //                                     explicitly enable and override config
+//         AUTOCOMMIT_NO_AI_SCREEN      disable only the model sensitive-content
+//                                     screen; messages stay model-generated and
+//                                     the deterministic scan still runs
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
 //         AUTOCOMMIT_LLM_MODEL         comma-separated candidate models; default
@@ -269,14 +272,15 @@ function runtimeSettings() {
     ? { url, key, models, kind: /\/messages(\/?)$/i.test(url) ? "zcode-anthropic" : undefined }
     : null;
 
-  const envNoAi = normalizeEnvBoolean("AUTOCOMMIT_NO_AI");
-  let noAi;
-  if (envNoAi !== null) noAi = { value: envNoAi, source: "env" };
-  else if (typeof data.noAi === "boolean") noAi = { value: data.noAi, source: "config" };
-  else {
-    if (data.noAi !== undefined) problems.push("config.json noAi is not a boolean");
-    noAi = { value: false, source: "default" };
-  }
+  const cfgBool = (key, envName) => {
+    const envValue = normalizeEnvBoolean(envName);
+    if (envValue !== null) return { value: envValue, source: "env" };
+    if (typeof data[key] === "boolean") return { value: data[key], source: "config" };
+    if (data[key] !== undefined) problems.push("config.json " + key + " is not a boolean");
+    return { value: false, source: "default" };
+  };
+  const noAi = cfgBool("noAi", "AUTOCOMMIT_NO_AI");
+  const noAiScreen = cfgBool("noAiScreen", "AUTOCOMMIT_NO_AI_SCREEN");
 
   const envMs = name => {
     const raw = process.env[name];
@@ -302,6 +306,7 @@ function runtimeSettings() {
     manual,
     manualIncomplete,
     noAi,
+    noAiScreen,
     claudeBin: envString("AUTOCOMMIT_CLAUDE_BIN") || cfgString("claudeBin"),
     aiTimeoutMs: envMs("AUTOCOMMIT_AI_TIMEOUT_MS") ?? cfgMs("aiTimeoutMs"),
     aiTotalMs: envMs("AUTOCOMMIT_AI_TOTAL_MS") ?? cfgMs("aiTotalMs")
@@ -316,6 +321,16 @@ function noAiReason(settings) {
   return resolved.noAi.source === "env"
     ? "AUTOCOMMIT_NO_AI=1"
     : "config.json noAi=true";
+}
+
+// Model screening only: the deterministic content scan still runs, and commit
+// messages are still model-generated.
+function noAiScreenReason(settings) {
+  const resolved = settings || runtimeSettings();
+  if (!resolved.noAiScreen.value) return null;
+  return resolved.noAiScreen.source === "env"
+    ? "AUTOCOMMIT_NO_AI_SCREEN=1"
+    : "config.json noAiScreen=true";
 }
 
 // Fallback message source: hosts or versions whose Stop payload omits
@@ -1700,6 +1715,11 @@ async function aiScreen(settings) {
       recordSensitive(null, { status: "disabled", reason: disabled });
       return;
     }
+    const screenDisabled = noAiScreenReason(settings);
+    if (screenDisabled) {
+      recordSensitive(null, { status: "disabled", reason: screenDisabled });
+      return;
+    }
     if (!changedFiles().length) {
       recordSensitive(null, { status: "skipped", reason: "no staged files" });
       return;
@@ -1785,7 +1805,7 @@ module.exports = {
   formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider,
   loadWorkbuddyProvider, loadClaudeProvider, loadClaudeCliProvider,
   claudeModelCandidates, CLI_MODEL, findClaudeCli,
-  userConfigFile, readUserConfig, runtimeSettings, noAiReason,
+  userConfigFile, readUserConfig, runtimeSettings, noAiReason, noAiScreenReason,
   buildMessagePrompt, buildScreenPrompt, addedLinesView, parseDiffAdditions,
   parseCliEnvelope, runClaudeCli, lastAssistantFromTranscript, readSseText,
   changedFiles, readDiff, collectSensitive, writeSensitive,

@@ -239,7 +239,8 @@ anything else.
   enabling.
 - Sensitive files pass a two-layer gate (filename rules plus model screening);
   excluded files stay uncommitted in the worktree and are omitted from the
-  commit message. This is not a security boundary.
+  commit message. Set `noAiScreen` to skip the model layer only — the
+  deterministic scan still runs. This is not a security boundary.
 - Uses `--no-verify`, disables GPG signing, and skips
   merge/rebase/conflict/detached-HEAD states.
 - Read [safety](references/safety.md) for host-specific caveats (merged Claude

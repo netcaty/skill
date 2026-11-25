@@ -338,6 +338,32 @@ test("config.json noAi disables both model calls", async () => {
     "no model call should run when noAi is set in config.json");
 });
 
+test("config.json noAiScreen keeps the message model", async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ noAiScreen: true }));
+  const trace = path.join(dir, "trace.json");
+  const env = cliCase(dir, {
+    FAKE_MODE: "ok",
+    FAKE_TRACE: trace,
+    AUTOCOMMIT_CONFIG: cfg
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了问题" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.match(res.stdout, /^fix: /);
+  const status = readStatus(dir);
+  assert.strictEqual(status.status, "ok");
+  assert.deepStrictEqual(status.sensitive.screen, {
+    status: "disabled",
+    reason: "config.json noAiScreen=true"
+  });
+  assert.ok(fs.existsSync(trace), "the message model must still run");
+  assert.ok(!fs.existsSync(trace + ".screen"), "the screening model must not run");
+});
+
 test("AUTOCOMMIT_NO_AI=0 overrides config.json noAi", async () => {
   const dir = tmp();
   const cfg = path.join(dir, "config.json");

@@ -133,6 +133,28 @@ test("deterministic scan flags a private key even with AI disabled", async () =>
   });
 });
 
+test("noAiScreen disables only the model screen, not the deterministic scan", async () => {
+  const dir = tmp();
+  const c = scanCase(dir, ["config/keys.txt"], "config/keys.txt", [PRIVATE_KEY]);
+  c.env.AUTOCOMMIT_NO_AI = "0";
+  c.env.AUTOCOMMIT_NO_AI_SCREEN = "1";
+  // Keep the message task offline: this agent has no provider env here.
+  c.env.AUTOCOMMIT_AGENT = "workbuddy";
+
+  const res = await runHelper(c.env,
+    JSON.stringify({ last_assistant_message: "加了一个配置文件" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.deepStrictEqual(readOut(c.out), ["config/keys.txt"],
+    "the deterministic scan must still exclude the file");
+  const status = JSON.parse(fs.readFileSync(c.status, "utf8"));
+  assert.strictEqual(status.sensitive.local, 1);
+  assert.deepStrictEqual(status.sensitive.screen, {
+    status: "disabled",
+    reason: "AUTOCOMMIT_NO_AI_SCREEN=1"
+  });
+});
+
 test("screening still runs when the final message is empty", async () => {
   const dir = tmp();
   const c = scanCase(dir, ["src/db.ts"], "src/db.ts", ["const url = \"" + DB_URL + "\";"]);
