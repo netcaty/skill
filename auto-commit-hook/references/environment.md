@@ -25,7 +25,8 @@ use.
 `config.json` is a settings overlay, not a provider declaration. A complete
 `url` + `key` + `model` trio is the manual endpoint; a file with only settings
 (for example `{ "noAi": true }` or `{ "aiTimeoutMs": 12000 }`) leaves the
-host's session provider in charge.
+host's session provider in charge. A `/v1/messages` URL uses Anthropic request
+style and `/v1/chat/completions` uses OpenAI style.
 
 Invalid values are ignored with a diagnostic and the next layer is used; they
 never block a turn. `config --set` rejects invalid explicit input instead.

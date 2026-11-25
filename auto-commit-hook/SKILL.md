@@ -133,40 +133,21 @@ unreferenced (`backups/` is kept).
 
 ## Commit-message model
 
-By default, commit messages use the host's session provider; on Claude Code with
-no provider env or saved endpoint, it falls back to the local `claude` CLI login
-(`haiku`). A saved `<skill-dir>/config.json` can supply a manual endpoint and
-runtime settings; environment variables outrank it per key (see
-[environment](references/environment.md)).
+Messages use the host's session provider by default; on Claude Code without a
+provider or saved endpoint, the local `claude` CLI login (`haiku`) is used.
+`<skill-dir>/config.json` can supply a manual endpoint and runtime settings, and
+environment variables outrank it per key. The keys, defaults and priority are
+in [environment](references/environment.md).
 
 The file is user-managed: never ask for, accept, or print an API key in chat,
-and never pass one as a CLI argument (do not use `config --url/--key`). Give
-the user `<skill-dir>/config.json` and this format to edit themselves:
-
-```json
-{
-  "url": "https://example.com/v1/messages",
-  "key": "sk-...",
-  "model": ["glm-5.3-flash", "auto/glm-5.3-flash"],
-  "noAi": false,
-  "claudeBin": "/path/to/claude",
-  "aiTimeoutMs": 8000,
-  "aiTotalMs": 13000,
-  "sourceDir": "/path/to/skill-checkout"
-}
-```
-
-`url`, `key` and `model` are required together, and only for the manual
-endpoint; a file with only settings (for example `{"noAi": true}`) keeps the
-session provider. `/v1/messages` uses Anthropic style and
-`/v1/chat/completions` uses OpenAI style; `model` takes a list tried in order
-(or a comma-separated string).
+and never pass one as a CLI argument. Point the user at
+`<skill-dir>/config.json` to edit, or use:
 
 ```bash
-bash scripts/run.sh config --show                   # effective values; key masked
-bash scripts/run.sh config --set aiTimeoutMs=12000  # runtime setting
-bash scripts/run.sh config --unset noAi
-bash scripts/run.sh config --clear                  # remove the whole file
+bash scripts/run.sh config --show      # effective values and sources; key masked
+bash scripts/run.sh config --set <key>=<value>
+bash scripts/run.sh config --unset <key>
+bash scripts/run.sh config --clear
 ```
 
 ## What to tell the user
@@ -267,7 +248,8 @@ anything else.
 
 ## Reference files
 
-- [environment](references/environment.md) — environment variable overrides
+- [environment](references/environment.md) — config keys, environment
+  overrides, priority
 - [troubleshooting](references/troubleshooting.md) — failure reporting, manual
   hook runs, common problems
 - [safety](references/safety.md) — complete safety behaviour
