@@ -336,6 +336,38 @@ test("hook excludes a non-ASCII secret name without naming it in the message", (
   assert.strictEqual(subject, "chore: update notes.txt");
 });
 
+test("hook records a run when the name gate excludes everything", () => {
+  const repo = initRepo();
+  fs.writeFileSync(path.join(repo, ".env"), "TOKEN=abc\n");
+  const state = tmp();
+
+  const res = runHook(repo, state);
+  assert.strictEqual(res.status, 0, res.stderr);
+
+  assert.strictEqual(git(repo, ["log", "--oneline"]).stdout.trim(), "",
+    "nothing may be committed");
+  const last = JSON.parse(fs.readFileSync(path.join(state, "last-run.json"), "utf8"));
+  assert.strictEqual(last.status, "ok");
+  assert.strictEqual(last.skipped, "sensitive");
+});
+
+test("hook records a run when the content gate excludes everything", () => {
+  const repo = initRepo();
+  fs.writeFileSync(path.join(repo, "settings.txt"), "key: " + AWS_KEY + "\n");
+  const state = tmp();
+
+  const res = runHook(repo, state);
+  assert.strictEqual(res.status, 0, res.stderr);
+
+  assert.strictEqual(git(repo, ["log", "--oneline"]).stdout.trim(), "",
+    "nothing may be committed");
+  const last = JSON.parse(fs.readFileSync(path.join(state, "last-run.json"), "utf8"));
+  assert.strictEqual(last.status, "ok");
+  assert.strictEqual(last.skipped, "sensitive");
+  assert.strictEqual(last.ai.sensitive.screened, "local");
+  assert.strictEqual(last.ai.sensitive.excluded, 1);
+});
+
 test("hook unstages a content-level secret when no model runs", () => {
   const repo = initRepo();
   fs.writeFileSync(path.join(repo, "settings.txt"), "key: " + AWS_KEY + "\n");
