@@ -160,6 +160,11 @@ function printSensitive(ai) {
   parts.push((Number(s.excluded) || 0) + " excluded");
   if (Number(s.unmatched)) parts.push(Number(s.unmatched) + " unmatched path(s)");
   if (s.truncated) parts.push("truncated at the exclusion cap");
+  const screen = s.screen;
+  if (screen && screen.status && screen.status !== "ok" && screen.status !== "pending") {
+    parts.push("screen " + oneLine(screen.status, 20) +
+      (screen.reason ? " (" + oneLine(screen.reason, 100) + ")" : ""));
+  }
   console.log("  sensitive: " + parts.join(", "));
 }
 

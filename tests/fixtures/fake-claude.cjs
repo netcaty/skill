@@ -12,7 +12,12 @@ const trace = process.env.FAKE_TRACE;
 let input = "";
 try { input = fs.readFileSync(0, "utf8"); } catch {}
 
-if (trace) {
+// The helper runs two independent prompts (message and screening); keep their
+// traces apart so each test can inspect the one it cares about.
+const traceFile = trace
+  ? (input.includes("AGENT_FINAL_MESSAGE") ? trace : trace + ".screen")
+  : "";
+if (traceFile) {
   const env = {};
   for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "AUTOCOMMIT_IN_HOOK", "ANTHROPIC_BASE_URL"]) {
     env[name] = process.env[name] == null ? null : process.env[name];
@@ -24,7 +29,7 @@ if (trace) {
   if (at >= 0 && argv[at + 1]) {
     try { settings = JSON.parse(fs.readFileSync(argv[at + 1], "utf8")); } catch {}
   }
-  fs.writeFileSync(trace, JSON.stringify({ argv, input, env, settings }, null, 2), "utf8");
+  fs.writeFileSync(traceFile, JSON.stringify({ argv, input, env, settings }, null, 2), "utf8");
 }
 
 const result = JSON.stringify({

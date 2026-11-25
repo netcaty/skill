@@ -135,6 +135,52 @@ test("staged sensitive paths from the CLI response are unstaged", async () => {
   assert.strictEqual(res.code, 0, res.stderr);
   const sensitive = fs.readFileSync(path.join(dir, "sensitive.txt"), "utf8").trim();
   assert.strictEqual(sensitive, "a.txt", "only staged paths may be written");
+  const status = readStatus(dir);
+  assert.strictEqual(status.sensitive.screened, "model+local");
+  assert.strictEqual(status.sensitive.screen.status, "ok");
+});
+
+test("screening is its own CLI prompt with added lines only", async () => {
+  const dir = tmp();
+  const trace = path.join(dir, "trace.json");
+  const diff = path.join(dir, "diff.txt");
+  fs.writeFileSync(diff, [
+    "diff --git a/a.txt b/a.txt",
+    "--- a/a.txt",
+    "+++ b/a.txt",
+    "@@ -0,0 +1,2 @@",
+    "+const first = 1;",
+    "+const second = 2;",
+    ""
+  ].join("\n"));
+  const env = cliCase(dir, {
+    FAKE_MODE: "ok",
+    FAKE_TRACE: trace,
+    DIFF_FILE: diff
+  });
+
+  const res = await runHelper(env,
+    JSON.stringify({ last_assistant_message: "修复了解析边界" }));
+
+  assert.strictEqual(res.code, 0, res.stderr);
+  const screen = JSON.parse(fs.readFileSync(trace + ".screen", "utf8"));
+  assert.ok(screen.input.includes("FILE_LIST"), "the screen prompt needs the staged list");
+  assert.ok(screen.input.includes("ADDED_LINES"), "the screen prompt needs the added-lines view");
+  assert.ok(screen.input.includes("const first = 1;"),
+    "added content must reach the screening prompt");
+  assert.ok(!screen.input.includes("AGENT_FINAL_MESSAGE"),
+    "the agent reply must not be sent to the screening call");
+
+  const message = JSON.parse(fs.readFileSync(trace, "utf8"));
+  assert.ok(message.input.includes("AGENT_FINAL_MESSAGE"));
+  assert.ok(!message.input.includes("const first = 1;"),
+    "the message prompt must not carry the diff");
+
+  const status = readStatus(dir);
+  assert.strictEqual(status.status, "ok");
+  assert.strictEqual(status.sensitive.screened, "model+local");
+  assert.strictEqual(status.sensitive.screen.status, "ok");
+  assert.strictEqual(status.sensitive.screen.transport, "cli");
 });
 
 test("stdout diagnostics before the JSON envelope are tolerated", async () => {
@@ -215,7 +261,8 @@ test("direct HTTP credentials win over the CLI", async () => {
   assert.strictEqual(res.code, 0, res.stderr);
   const status = readStatus(dir);
   assert.strictEqual(status.transport, "http");
-  assert.ok(!fs.existsSync(trace), "the CLI must not run when an endpoint is configured");
+  assert.ok(!fs.existsSync(trace) && !fs.existsSync(trace + ".screen"),
+    "the CLI must not run when an endpoint is configured");
 });
 
 test("saved llm-config outranks the CLI fallback", async () => {
@@ -240,7 +287,8 @@ test("saved llm-config outranks the CLI fallback", async () => {
   const status = readStatus(dir);
   assert.strictEqual(status.source, "manual");
   assert.strictEqual(status.transport, "http");
-  assert.ok(!fs.existsSync(trace), "the CLI must not run when a manual config exists");
+  assert.ok(!fs.existsSync(trace) && !fs.existsSync(trace + ".screen"),
+    "the CLI must not run when a manual config exists");
 });
 
 test("AUTOCOMMIT_NO_AI disables the fallback", async () => {
@@ -255,7 +303,8 @@ test("AUTOCOMMIT_NO_AI disables the fallback", async () => {
   await runHelper(env, JSON.stringify({ last_assistant_message: "修复了问题" }));
 
   assert.strictEqual(readStatus(dir).status, "disabled");
-  assert.ok(!fs.existsSync(trace), "the CLI must not run when AI is disabled");
+  assert.ok(!fs.existsSync(trace) && !fs.existsSync(trace + ".screen"),
+    "the CLI must not run when AI is disabled");
 });
 
 test("AUTOCOMMIT_IN_HOOK stops the shell hook before any git work", () => {

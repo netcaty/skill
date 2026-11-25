@@ -11,8 +11,10 @@ The full behaviour list behind the short summary in `SKILL.md`.
   JSON, and `.npmrc`/`.pypirc`/`.netrc`. Layer 2 has a deterministic half that
   scans the staged diff's added lines for high-confidence secret formats
   (private-key blocks, AWS/GitHub/OpenAI/Slack/Google token shapes,
-  credentials-in-URL) and a best-effort half that asks the same model call that
-  writes the commit message to flag more paths. The deterministic half runs
+  credentials-in-URL) and a best-effort half that runs a separate,
+  recall-biased screening call over the staged paths and the added lines (a
+  dedicated request, so it can neither truncate nor break the message call and
+  vice versa). The deterministic half runs
   whenever the helper runs, including with `AUTOCOMMIT_NO_AI=1`, when the model
   is unavailable or times out, and when the agent reply is empty; only the
   model half can be absent (and a missing JavaScript runtime leaves just

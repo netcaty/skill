@@ -7,6 +7,7 @@ const { test, after } = require("node:test");
 const assert = require("node:assert");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -127,16 +128,19 @@ test("deterministic scan flags a private key even with AI disabled", async () =>
     model: 0,
     unmatched: 0,
     truncated: false,
-    excluded: 1
+    excluded: 1,
+    screen: { status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" }
   });
 });
 
 test("screening still runs when the final message is empty", async () => {
   const dir = tmp();
   const c = scanCase(dir, ["src/db.ts"], "src/db.ts", ["const url = \"" + DB_URL + "\";"]);
-  // No model is consulted for an empty message: the helper stops before the
-  // provider lookup, so this is offline without needing AUTOCOMMIT_NO_AI.
+  // The message call stops before the provider lookup, but the screening call
+  // still runs. Pin the agent to one whose provider env is absent, so this
+  // stays offline instead of finding the real `claude` on PATH.
   delete c.env.AUTOCOMMIT_NO_AI;
+  c.env.AUTOCOMMIT_AGENT = "workbuddy";
 
   const res = await runHelper(c.env, JSON.stringify({}));
 
@@ -145,6 +149,7 @@ test("screening still runs when the final message is empty", async () => {
   const status = JSON.parse(fs.readFileSync(c.status, "utf8"));
   assert.strictEqual(status.status, "skipped");
   assert.strictEqual(status.sensitive.local, 1);
+  assert.strictEqual(status.sensitive.screen.status, "unavailable");
 });
 
 test("non-ASCII diff headers resolve to the exact staged path", async () => {
@@ -177,6 +182,83 @@ test("model paths with Windows separators or case resolve to the staged spelling
   } finally {
     if (saved === undefined) delete process.env.CHANGED_FILE;
     else process.env.CHANGED_FILE = saved;
+  }
+});
+
+// Loopback Anthropic-style endpoint: answers the message prompt and the
+// screening prompt differently and records what each request carried.
+function startServer() {
+  return new Promise(resolve => {
+    const requests = [];
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", buf => { body += buf; });
+      req.on("end", () => {
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch {}
+        const user = parsed && Array.isArray(parsed.messages) &&
+          parsed.messages[0] ? String(parsed.messages[0].content || "") : "";
+        requests.push({
+          max_tokens: parsed && parsed.max_tokens,
+          system: parsed && parsed.system,
+          user
+        });
+        const text = user.includes("FILE_LIST")
+          ? JSON.stringify({ sensitiveFiles: ["a.txt"] })
+          : JSON.stringify({ type: "fix", subject: "修好解析边界", body: ["补充空输入处理"] });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ content: [{ type: "text", text }] }));
+      });
+    });
+    server.listen(0, "127.0.0.1", () => resolve({
+      server, requests, port: server.address().port
+    }));
+  });
+}
+
+test("HTTP screening is a separate request with its own budget", async () => {
+  const dir = tmp();
+  const { server, requests, port } = await startServer();
+  try {
+    const env = baseEnv({
+      AUTOCOMMIT_AGENT: "claude",
+      AUTOCOMMIT_LLM_CONFIG: path.join(dir, "missing-llm.json"),
+      AUTOCOMMIT_LLM_URL: "http://127.0.0.1:" + port + "/v1/messages",
+      AUTOCOMMIT_LLM_KEY: "test-key",
+      AUTOCOMMIT_LLM_MODEL: "test-model",
+      CHANGED_FILE: writeChanged(dir, ["a.txt"]),
+      DIFF_FILE: writeDiff(dir, "a.txt", ["const token = 1;"]),
+      SENSITIVE_OUT: path.join(dir, "sensitive.txt"),
+      AI_STATUS_OUT: path.join(dir, "ai.json")
+    });
+    delete env.AUTOCOMMIT_NO_AI;
+
+    const res = await runHelper(env,
+      JSON.stringify({ last_assistant_message: "修复了解析边界" }));
+
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.strictEqual(requests.length, 2, "one message call and one screening call");
+    const message = requests.find(r => r.user.includes("AGENT_FINAL_MESSAGE"));
+    const screen = requests.find(r => r.user.includes("FILE_LIST"));
+    assert.ok(message && screen, "both prompts must be sent");
+    assert.strictEqual(message.max_tokens, 600);
+    assert.strictEqual(screen.max_tokens, 200);
+    assert.ok(!message.user.includes("const token = 1;"),
+      "the message prompt must not carry the diff");
+    assert.ok(screen.user.includes("const token = 1;"),
+      "added lines must reach the screening prompt");
+    assert.ok(!screen.user.includes("AGENT_FINAL_MESSAGE"),
+      "the agent reply must not be sent to the screening call");
+
+    assert.match(res.stdout, /^fix: 修好解析边界/);
+    assert.deepStrictEqual(readOut(path.join(dir, "sensitive.txt")), ["a.txt"]);
+    const status = JSON.parse(fs.readFileSync(path.join(dir, "ai.json"), "utf8"));
+    assert.strictEqual(status.status, "ok");
+    assert.strictEqual(status.sensitive.screened, "model+local");
+    assert.strictEqual(status.sensitive.screen.status, "ok");
+    assert.strictEqual(status.sensitive.screen.transport, "http");
+  } finally {
+    server.close();
   }
 });
 

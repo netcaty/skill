@@ -23,7 +23,9 @@
 //                                     the commit message was produced (status
 //                                     ok | disabled | skipped | unavailable |
 //                                     error, provider source, model, timings,
-//                                     checked sources or per-model errors);
+//                                     checked sources or per-model errors), plus
+//                                     a "sensitive" summary of the screening
+//                                     call and the deterministic scan;
 //                                     auto-commit.sh embeds it verbatim as the
 //                                     "ai" field of last-run.json
 //         AUTOCOMMIT_AGENT             agent type from auto-commit.sh (zcode |
@@ -77,7 +79,8 @@
 //                                     the DEFAULT_* mappings and the
 //                                     capabilities list, never ANTHROPIC_MODEL
 //                                     itself
-//         AUTOCOMMIT_NO_AI=1           disable the model call
+//         AUTOCOMMIT_NO_AI=1           disable both model calls (the
+//                                     deterministic content scan still runs)
 //         AUTOCOMMIT_PROVIDER_CONFIG   override provider_config.json path
 //         AUTOCOMMIT_LLM_URL / _KEY    endpoint overrides
 //         AUTOCOMMIT_LLM_MODEL         comma-separated candidate models; default
@@ -90,15 +93,22 @@
 //         AUTOCOMMIT_CLAUDE_BIN        explicit claude executable for the
 //                                     fallback; default is CLAUDE_CODE_EXECPATH,
 //                                     then a PATH lookup
-//         AUTOCOMMIT_AI_TIMEOUT_MS     per-model timeout (default 8000 over HTTP,
-//                                     18000 for claude -p)
-//         AUTOCOMMIT_AI_TOTAL_MS       overall model budget (default 13000 over
-//                                     HTTP, 20000 for claude -p)
+//         AUTOCOMMIT_AI_TIMEOUT_MS     per-model timeout, per call (default 8000
+//                                     over HTTP, 18000 for claude -p)
+//         AUTOCOMMIT_AI_TOTAL_MS       budget per call (default 13000 over HTTP,
+//                                     20000 for claude -p); the call runs in
+//                                     parallel with the other one
 // stdout: full commit message text (Conventional Commits subject + AI body)
 //
-// The model summarizes the agent's final reply into a conventional commit
-// subject and 2-5 body bullets. Any failure falls back to local heuristics so
-// the hook never blocks or fails the turn.
+// Each turn makes two independent model calls, started together:
+//   - message: the agent's final reply -> Conventional Commits subject + body
+//     (small, no diff, 600 output tokens);
+//   - screening: staged paths + added lines only -> sensitiveFiles, with a
+//     recall-biased policy and a small output budget. It is a separate call so
+//     it cannot truncate or break the message, and vice versa; its outcome is
+//     recorded under "sensitive" and never blocks the message path.
+// Any failure falls back to local heuristics/deterministic screening so the
+// hook never blocks or fails the turn.
 "use strict";
 
 const { spawn } = require("child_process");
@@ -348,38 +358,79 @@ function collectSensitive(obj) {
   return matchStaged(obj && obj.sensitiveFiles);
 }
 
-// Layer 2b (deterministic): scan added lines of the staged diff for known
-// secret formats and attribute each hit to the file header it follows. The
-// diff is generated with core.quotePath=false, so a non-ASCII path matches the
-// staged name byte-for-byte.
-function scanSensitiveDiff(diff) {
-  const hits = [];
-  let current = "";
+// Split a unified diff into per-file lists of added lines. A `+++` line is a
+// header only directly after its `---` pair, and `+` lines count only inside a
+// hunk, so added content that itself begins with "+++ " is not mistaken for a
+// header. The diff is generated with core.quotePath=false, so non-ASCII paths
+// stay byte-for-byte comparable with the staged names.
+function parseDiffAdditions(diff) {
+  const files = [];
+  let current = null;
   let inHunk = false;
   let minusHeader = false;
   for (const line of String(diff || "").split(/\r?\n/)) {
     if (line.startsWith("diff --git ")) {
       inHunk = false;
       minusHeader = false;
-      current = "";
+      current = null;
       continue;
     }
     if (!inHunk) {
-      // A `+++` line is a file header only directly after its `---` pair;
-      // added content inside a hunk can itself begin with "+++ ".
       if (line.startsWith("@@")) { inHunk = true; minusHeader = false; continue; }
       if (line.startsWith("--- ")) { minusHeader = true; continue; }
       if (line.startsWith("+++ ") && minusHeader) {
         const header = line.slice(4).replace(/\t$/, "");
-        current = header === "/dev/null" ? "" : header.replace(/^b\//, "");
+        current = null;
+        if (header !== "/dev/null") {
+          current = { path: header.replace(/^b\//, ""), lines: [] };
+          files.push(current);
+        }
       }
       minusHeader = false;
       continue;
     }
-    if (!current || !line.startsWith("+")) continue;
-    if (SENSITIVE_PATTERNS.some(re => re.test(line))) hits.push(current);
+    if (current && line.startsWith("+")) current.lines.push(line.slice(1));
+  }
+  return files;
+}
+
+// Layer 2b (deterministic): scan added lines for known secret formats.
+function scanSensitiveDiff(diff) {
+  const hits = [];
+  for (const file of parseDiffAdditions(diff)) {
+    if (file.lines.some(line => SENSITIVE_PATTERNS.some(re => re.test(line)))) {
+      hits.push(file.path);
+    }
   }
   return matchStaged(hits).files;
+}
+
+// Model screening input: added lines only, grouped by file. A unified diff
+// spends most of its characters on context lines and headers, so this view
+// covers far more files in the same prompt budget. Paths with no added lines
+// (deletions, pure renames, binaries) are absent - the screen can still flag
+// them by name from FILE_LIST.
+const SCREEN_VIEW_CAP = 12000;
+
+function addedLinesView(diff, cap) {
+  const limit = cap || SCREEN_VIEW_CAP;
+  const blocks = [];
+  let used = 0;
+  let truncated = false;
+  for (const file of parseDiffAdditions(diff)) {
+    if (!file.lines.length) continue;
+    const block = "文件: " + file.path + "\n" +
+      file.lines.map(line => "  " + line).join("\n");
+    if (used + block.length > limit) {
+      const room = limit - used;
+      if (room > 80) blocks.push(block.slice(0, room) + "\n…");
+      truncated = true;
+      break;
+    }
+    blocks.push(block);
+    used += block.length + 1;
+  }
+  return { text: blocks.join("\n\n"), truncated };
 }
 
 function writeSensitive(files) {
@@ -388,10 +439,11 @@ function writeSensitive(files) {
   try { fs.writeFileSync(out, files.join("\n") + "\n", "utf8"); } catch {}
 }
 
-// Merge the deterministic hits with whatever the model reported (modelResult
-// is null when the model was disabled, unavailable, skipped or failed),
+// Merge the deterministic hits with whatever the screening call reported
+// (modelResult is null when that call was disabled, unavailable or failed),
 // record the outcome for the diagnostic record, and publish the final list.
-function recordSensitive(modelResult) {
+// screenInfo describes that call; the message call's status is separate.
+function recordSensitive(modelResult, screenInfo) {
   const model = modelResult && Array.isArray(modelResult.files) ? modelResult.files : [];
   const merged = [];
   const seen = new Set();
@@ -409,9 +461,14 @@ function recordSensitive(modelResult) {
     unmatched: modelResult && Array.isArray(modelResult.unmatched)
       ? modelResult.unmatched.length : 0,
     truncated: merged.length > MAX_SENSITIVE,
-    excluded: capped.length
+    excluded: capped.length,
+    screen: screenInfo || { status: "pending" }
   };
   writeSensitive(capped);
+  // The message call may have written its status before the screening call
+  // finished (the two run concurrently); rewrite it so the final record
+  // carries the completed screening summary.
+  if (lastAiStatus) writeAiStatus(lastAiStatus);
   return capped;
 }
 
@@ -422,8 +479,11 @@ function recordSensitive(modelResult) {
 // identities, endpoints (query stripped), timings and error messages go in;
 // never API keys, tokens or the model's response text.
 let aiStatusWritten = false;
+// Last message-status object, kept so a screening result that lands after the
+// message finished can re-embed the final scanState into the same record.
+let lastAiStatus = null;
 
-// Set by main() before the model call: deterministic scan hits and the last
+// Set by main() before the model calls: deterministic scan hits and the last
 // screening outcome. writeAiStatus embeds the summary (counts only - never
 // paths or content) so "screened and found nothing" is distinguishable from
 // "never screened" in last-run.json.
@@ -457,6 +517,7 @@ function safeUrl(value) {
 
 function writeAiStatus(obj) {
   aiStatusWritten = true;
+  lastAiStatus = obj;
   const out = process.env.AI_STATUS_OUT;
   if (!out) return;
   let json;
@@ -1139,40 +1200,33 @@ function cliFlagRejected(res) {
       .test(String(res.stderr || ""));
 }
 
-function buildPrompt(text) {
-  const clipped = Array.from(text).slice(0, 12000).join("");
-  const diff = readDiff();
-  const diffClip = Array.from(diff).slice(0, 12000).join("");
+// A bounded file list for prompts; the whitelist that validates the model's
+// answer always covers every staged path, not just the listed ones.
+function promptFileList(limit) {
   const files = changedFiles();
+  const listed = files.slice(0, limit);
+  const lines = listed.slice();
+  if (files.length > listed.length) {
+    lines.push("…另有 " + (files.length - listed.length) + " 个文件未列出");
+  }
+  return lines;
+}
+
+// Message prompt: only the agent's final reply and the staged file names. The
+// diff is deliberately absent - it exists for screening, which has its own
+// call. Keeping the two apart keeps this prompt small and lets a screening
+// failure leave the message untouched.
+function buildMessagePrompt(text) {
+  const clipped = Array.from(text).slice(0, 12000).join("");
+  const files = promptFileList(200);
   const prompt = [
     "根据下面的 AGENT_FINAL_MESSAGE（agent 本轮最终回复）生成一条 git 提交信息。要求：",
     "1. type 只能是：" + TYPES.join(", ") + "。",
     "2. subject：使用与 AGENT_FINAL_MESSAGE 相同的主语言概括本轮改动，不超过 40 个字符，不加句号，不要以 type 开头。",
     "3. body：2-5 条要点，每条一句话，概括本轮实际改动和结果；不要复述执行过程；不要输出文件数量、增删行数等 diffstat；不要编造消息中没有的信息。",
-    '4. 只输出一个 JSON 对象，不要 markdown 代码块：{"type":"fix","subject":"...","body":["..."],"sensitiveFiles":[]}'
+    '4. 只输出一个 JSON 对象，不要 markdown 代码块：{"type":"fix","subject":"...","body":["..."]}'
   ];
-  if (files.length) {
-    // The prompt lists a bounded subset; the whitelist used to validate the
-    // model's answer still covers every staged path.
-    const listed = files.slice(0, 200);
-    prompt.push("", "CHANGED_FILES（本轮暂存的文件路径）:", listed.join("\n"));
-    if (files.length > listed.length) {
-      prompt.push("…另有 " + (files.length - listed.length) + " 个文件未列出");
-    }
-  }
-  if (diffClip) {
-    prompt.push(
-      "",
-      "另外，检查 CHANGED_FILES 和 DIFF 中是否包含敏感信息（API key、token、私钥、证书、密码、数据库连接串等）：",
-      "- 把含敏感信息的文件路径放进 sensitiveFiles；路径必须逐字来自 CHANGED_FILES，最多 10 个。",
-      "- 只在较有把握时标记，宁缺勿滥；没有就返回 []。",
-      "",
-      "DIFF:",
-      "<<<",
-      diffClip,
-      ">>>"
-    );
-  }
+  if (files.length) prompt.push("", "CHANGED_FILES（本轮暂存的文件路径）:", files.join("\n"));
   prompt.push("", "AGENT_FINAL_MESSAGE:", "<<<", clipped, ">>>");
   return {
     // The role line rides in the user message, not --system-prompt: replacing
@@ -1182,8 +1236,37 @@ function buildPrompt(text) {
   };
 }
 
-async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs, started) {
-  const deadline = started + totalMs;
+// Screening prompt: staged paths plus a compact added-lines view, with a
+// recall-biased policy. A false positive costs one file in a checkpoint (the
+// commit body lists it); a false negative leaks a secret. The whitelist bounds
+// what a wrong answer can unstage, so "when in doubt, flag it" is safe.
+function buildScreenPrompt() {
+  const files = promptFileList(200);
+  const view = addedLinesView(readDiff());
+  const prompt = [
+    "检查下面的 FILE_LIST 和 ADDED_LINES（本轮暂存文件的新增行），找出含敏感信息的文件：",
+    "API key、access token、私钥/证书、密码或口令、数据库/消息队列连接串、云服务凭据等。",
+    "规则：",
+    "- 路径必须逐字来自 FILE_LIST，最多 10 个。",
+    "- 有疑问就标记：漏报的代价高于误报；无法确定时也放进结果。",
+    "- 新增行为空时也可以仅凭文件名判断（例如 .env、id_rsa、credentials.json）。",
+    "- 只输出一个 JSON 对象，不要 markdown 代码块：{\"sensitiveFiles\":[]}",
+    ""
+  ];
+  prompt.push("FILE_LIST:", files.length ? files.join("\n") : "(empty)");
+  prompt.push("", "ADDED_LINES（仅新增行，可能截断）:", "<<<", view.text || "(none)", ">>>");
+  if (view.truncated) prompt.push("（新增行视图已截断，靠后的文件未显示）");
+  return {
+    systemText: "你是敏感信息筛查器，只输出 JSON 对象。",
+    userText: prompt.join("\n")
+  };
+}
+
+// Run one `claude -p` prompt through the model/tier ladder until accept()
+// returns a value. Never writes status or sensitive output: the caller owns
+// both, so the message and screening calls stay independent.
+async function runCliModels(provider, promptText, opts, accept) {
+  const deadline = opts.deadline;
   const attempts = [];
   let budgetStopped = false;
   let settingsDir = "";
@@ -1207,7 +1290,7 @@ async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs,
         const left = deadline - Date.now();
         if (left < 1000) { budgetStopped = true; break; }
         if (tier > 1 && left < CLI_MIN_RETRY_MS) break;
-        const timeoutMs = Math.min(perAttemptMs, left);
+        const timeoutMs = Math.min(opts.perAttemptMs, left);
         const res = await runClaudeCli(provider.cli, promptText,
           { model, settingsPath, tier, timeoutMs });
         let retryTier = false;
@@ -1236,24 +1319,15 @@ async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs,
               const content = typeof result === "string" ? result : res.stdout;
               raw = parseModelJson(content);
             }
-            const draft = validate(raw, fallback);
-            if (draft) {
+            const value = accept(raw);
+            if (value) {
               delete attempt.error;
               delete attempt.code;
               attempt.ms = Date.now() - attemptStart;
               pushAttempt(attempts, attempt);
-              recordSensitive(collectSensitive(raw));
-              writeAiStatus({
-                status: "ok",
-                source: provider.source,
-                transport: "cli",
-                model,
-                ms: Date.now() - started,
-                attempts
-              });
-              return draft;
+              return { value, model, attempts };
             }
-            attempt.error = "response was not usable commit JSON";
+            attempt.error = opts.unusable;
           }
         }
         retryTier = cliFlagRejected(res);
@@ -1267,17 +1341,116 @@ async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs,
       try { fs.rmSync(settingsDir, { recursive: true, force: true }); } catch {}
     }
   }
-  writeAiStatus({
-    status: "error",
-    reason: budgetStopped
-      ? "total time budget exhausted (AUTOCOMMIT_AI_TOTAL_MS)"
-      : attempts.length ? "every model attempt failed" : "no model configured",
-    source: provider.source,
-    transport: "cli",
-    ms: Date.now() - started,
-    attempts
-  });
-  return null;
+  return { value: null, model: "", attempts, budgetStopped };
+}
+
+// One HTTP call, never throwing: a failure comes back as { error } so the
+// caller can record it per attempt.
+async function httpCall(provider, model, prompt, opts, signal) {
+  const streaming = provider.kind === "workbuddy";
+  const anthropic = provider.kind === "zcode-anthropic";
+  const messages = [
+    { role: "system", content: prompt.systemText },
+    { role: "user", content: prompt.userText }
+  ];
+  const headers = { "Content-Type": "application/json" };
+  if (streaming) {
+    headers["Authorization"] = "Bearer " + provider.token;
+    // The proxy resolves its session from this header; a plain Bearer
+    // token alone is answered with 401 unauthorized.
+    headers["x-workbuddy-mcp-context"] = provider.context;
+  } else if (anthropic) {
+    // Anthropic Messages API; Bearer is sent alongside x-api-key because
+    // local proxies differ in which one they check.
+    headers["x-api-key"] = provider.key;
+    headers["Authorization"] = "Bearer " + provider.key;
+    headers["anthropic-version"] = "2023-06-01";
+  } else {
+    headers["Authorization"] = "Bearer " + provider.key;
+  }
+  // Anthropic endpoints: disable thinking explicitly. It is a no-op for the
+  // official API (thinking is opt-in there) and switches off the default-on
+  // thinking of GLM/Kimi/DeepSeek-style compatible endpoints, which otherwise
+  // burn the time budget before the JSON comes back. The OpenAI-style body has
+  // no cross-vendor equivalent (OpenAI rejects the field), so its endpoints
+  // keep their default.
+  const body = anthropic
+    ? {
+        model: model,
+        max_tokens: opts.maxTokens,
+        temperature: 0.2,
+        thinking: { type: "disabled" },
+        system: messages[0].content,
+        messages: [{ role: "user", content: messages[1].content }]
+      }
+    : {
+        model: model,
+        messages,
+        temperature: 0.2,
+        max_tokens: opts.maxTokens,
+        stream: streaming
+      };
+  try {
+    const res = await fetch(provider.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal
+    });
+    if (!res.ok) return { error: await httpErrorDetail(res) };
+    const content = streaming
+      ? await readSseText(res)
+      : anthropic
+        ? ((data => Array.isArray(data && data.content)
+            ? data.content.filter(b => b && b.type === "text" && typeof b.text === "string").map(b => b.text).join("")
+            : "")(await res.json()))
+        : ((data => data && data.choices && data.choices[0] &&
+            data.choices[0].message && data.choices[0].message.content)(await res.json()));
+    if (typeof content !== "string" || !content.trim()) return { error: "empty response" };
+    return { content };
+  } catch (err) {
+    return { error: describeFetchError(err, opts.timeoutMs) };
+  }
+}
+
+// Try each model in order until accept() returns a value. Models are tried
+// sequentially, as before, but the message and screening calls run as two
+// independent instances of this loop.
+async function runHttpModels(provider, prompt, opts, accept) {
+  const attempts = [];
+  const tried = new Set();
+  let budgetStopped = false;
+  for (const model of provider.models) {
+    if (!model || tried.has(model)) continue;
+    tried.add(model);
+    const budget = opts.deadline - Date.now();
+    if (budget < 1000) { budgetStopped = true; break; }
+    const attempt = { model };
+    const attemptStart = Date.now();
+    const timeoutMs = Math.min(opts.perAttemptMs, budget);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await httpCall(provider, model, prompt,
+        { maxTokens: opts.maxTokens, timeoutMs }, controller.signal);
+      if (res.error) {
+        attempt.error = res.error;
+      } else {
+        const value = accept(parseModelJson(res.content));
+        if (value) {
+          attempt.ms = Date.now() - attemptStart;
+          pushAttempt(attempts, attempt);
+          return { value, model, attempts };
+        }
+        attempt.error = opts.unusable;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    attempt.ms = Date.now() - attemptStart;
+    pushAttempt(attempts, attempt);
+  }
+  return { value: null, model: "", attempts, budgetStopped };
 }
 
 // Concatenate delta.content out of an SSE response. The proxy interleaves
@@ -1346,6 +1519,35 @@ function validate(obj, fallback) {
   return { type, subject, body };
 }
 
+// Per-task model budget, from the same env knobs as before. Each task gets the
+// full budget; because the two tasks run concurrently, wall-clock stays near
+// one task's budget rather than their sum.
+function modelBudget(isCli, started, maxTokens, unusable) {
+  const perAttemptMs = Number(process.env.AUTOCOMMIT_AI_TIMEOUT_MS ||
+    (isCli ? CLI_ATTEMPT_DEFAULT : 8000));
+  const totalMs = Number(process.env.AUTOCOMMIT_AI_TOTAL_MS ||
+    (isCli ? CLI_TOTAL_DEFAULT : 13000));
+  return {
+    perAttemptMs, totalMs, started, maxTokens, unusable,
+    deadline: started + totalMs
+  };
+}
+
+function modelFailureReason(run) {
+  return run.budgetStopped
+    ? "total time budget exhausted (AUTOCOMMIT_AI_TOTAL_MS)"
+    : run.attempts.length ? "every model attempt failed" : "no model configured";
+}
+
+function runPrompt(provider, prompt, opts, accept) {
+  if (provider.kind === "claude-cli") {
+    return runCliModels(provider,
+      prompt.systemText + "\n\n" + prompt.userText, opts, accept);
+  }
+  return runHttpModels(provider, prompt, opts, accept);
+}
+
+// Message task: the agent's final reply is its only substantive input.
 async function aiDraft(text, fallback) {
   if (process.env.AUTOCOMMIT_NO_AI === "1") {
     writeAiStatus({ status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" });
@@ -1367,136 +1569,76 @@ async function aiDraft(text, fallback) {
     return null;
   }
 
-  const prompt = buildPrompt(text);
   const isCli = provider.kind === "claude-cli";
-  const perAttemptMs = Number(process.env.AUTOCOMMIT_AI_TIMEOUT_MS ||
-    (isCli ? CLI_ATTEMPT_DEFAULT : 8000));
-  const totalMs = Number(process.env.AUTOCOMMIT_AI_TOTAL_MS ||
-    (isCli ? CLI_TOTAL_DEFAULT : 13000));
   const started = Date.now();
-  if (isCli) {
-    return aiDraftCli(provider, prompt.systemText + "\n\n" + prompt.userText,
-      fallback, perAttemptMs, totalMs, started);
-  }
-  const messages = [
-    { role: "system", content: prompt.systemText },
-    { role: "user", content: prompt.userText }
-  ];
-  const deadline = started + totalMs;
-  const tried = new Set();
-  const attempts = [];
-  let budgetStopped = false;
-
-  for (const model of provider.models) {
-    if (!model || tried.has(model)) continue;
-    tried.add(model);
-    const budget = deadline - Date.now();
-    if (budget < 1000) { budgetStopped = true; break; }
-    const attempt = { model };
-    const attemptStart = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(perAttemptMs, budget));
-    try {
-      const streaming = provider.kind === "workbuddy";
-      const anthropic = provider.kind === "zcode-anthropic";
-      const headers = { "Content-Type": "application/json" };
-      if (streaming) {
-        headers["Authorization"] = "Bearer " + provider.token;
-        // The proxy resolves its session from this header; a plain Bearer
-        // token alone is answered with 401 unauthorized.
-        headers["x-workbuddy-mcp-context"] = provider.context;
-      } else if (anthropic) {
-        // Anthropic Messages API; Bearer is sent alongside x-api-key because
-        // local proxies differ in which one they check.
-        headers["x-api-key"] = provider.key;
-        headers["Authorization"] = "Bearer " + provider.key;
-        headers["anthropic-version"] = "2023-06-01";
-      } else {
-        headers["Authorization"] = "Bearer " + provider.key;
-      }
-      // Anthropic endpoints: disable thinking explicitly. It is a no-op for
-      // the official API (thinking is opt-in there) and switches off the
-      // default-on thinking of GLM/Kimi/DeepSeek-style compatible endpoints,
-      // which otherwise burn the time budget before the JSON comes back. The
-      // OpenAI-style body has no cross-vendor equivalent (OpenAI rejects the
-      // field), so its endpoints keep their default.
-      const body = anthropic
-        ? {
-            model: model,
-            max_tokens: 600,
-            temperature: 0.2,
-            thinking: { type: "disabled" },
-            system: messages[0].content,
-            messages: [{ role: "user", content: messages[1].content }]
-          }
-        : {
-            model: model,
-            messages,
-            temperature: 0.2,
-            max_tokens: 600,
-            stream: streaming
-          };
-      const res = await fetch(provider.url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-      if (!res.ok) {
-        attempt.error = await httpErrorDetail(res);
-      } else {
-        const content = streaming
-          ? await readSseText(res)
-          : anthropic
-            ? ((data => Array.isArray(data && data.content)
-                ? data.content.filter(b => b && b.type === "text" && typeof b.text === "string").map(b => b.text).join("")
-                : "")(await res.json()))
-            : ((data => data && data.choices && data.choices[0] &&
-                data.choices[0].message && data.choices[0].message.content)(await res.json()));
-        if (typeof content !== "string" || !content.trim()) {
-          attempt.error = "empty response";
-        } else {
-          const parsed = parseModelJson(content);
-          const draft = validate(parsed, fallback);
-          if (draft) {
-            attempt.ms = Date.now() - attemptStart;
-            pushAttempt(attempts, attempt);
-            recordSensitive(collectSensitive(parsed));
-            writeAiStatus({
-              status: "ok",
-              source: provider.source,
-              transport: "http",
-              url: safeUrl(provider.url),
-              model,
-              ms: Date.now() - started,
-              attempts
-            });
-            return draft;
-          }
-          attempt.error = "response was not usable commit JSON";
-        }
-      }
-    } catch (err) {
-      attempt.error = describeFetchError(err, Math.min(perAttemptMs, budget));
-    } finally {
-      clearTimeout(timer);
-    }
-    attempt.ms = Date.now() - attemptStart;
-    pushAttempt(attempts, attempt);
-  }
-
-  writeAiStatus({
-    status: "error",
-    reason: budgetStopped
-      ? "total time budget exhausted (AUTOCOMMIT_AI_TOTAL_MS)"
-      : attempts.length ? "every model attempt failed" : "no model configured",
+  const opts = modelBudget(isCli, started, 600,
+    "response was not usable commit JSON");
+  const run = await runPrompt(provider, buildMessagePrompt(text), opts,
+    raw => validate(raw, fallback));
+  const base = {
     source: provider.source,
-    transport: "http",
-    url: safeUrl(provider.url),
-    ms: Date.now() - started,
-    attempts
+    transport: isCli ? "cli" : "http",
+    ...(isCli ? {} : { url: safeUrl(provider.url) })
+  };
+  if (run.value) {
+    writeAiStatus({
+      status: "ok", ...base, model: run.model,
+      ms: Date.now() - started, attempts: run.attempts
+    });
+    return run.value;
+  }
+  writeAiStatus({
+    status: "error", reason: modelFailureReason(run), ...base,
+    ms: Date.now() - started, attempts: run.attempts
   });
   return null;
+}
+
+// Screening task: an independent model call with only the staged file list and
+// added lines, a recall-biased policy, and its own small output budget. It
+// records its outcome itself; a failure here leaves the message task and the
+// deterministic scan untouched.
+async function aiScreen() {
+  try {
+    const started = Date.now();
+    if (process.env.AUTOCOMMIT_NO_AI === "1") {
+      recordSensitive(null, { status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" });
+      return;
+    }
+    if (!changedFiles().length) {
+      recordSensitive(null, { status: "skipped", reason: "no staged files" });
+      return;
+    }
+    const provider = loadProvider([]);
+    if (!provider) {
+      recordSensitive(null, {
+        status: "unavailable",
+        reason: "no model provider configured"
+      });
+      return;
+    }
+    const isCli = provider.kind === "claude-cli";
+    const opts = modelBudget(isCli, started, 200,
+      "response was not usable screening JSON");
+    const run = await runPrompt(provider, buildScreenPrompt(), opts,
+      raw => (raw && Array.isArray(raw.sensitiveFiles) ? collectSensitive(raw) : null));
+    const base = { transport: isCli ? "cli" : "http", ms: Date.now() - started };
+    if (run.value) {
+      recordSensitive(run.value, { status: "ok", model: run.model, ...base });
+    } else {
+      recordSensitive(null, {
+        status: "error",
+        reason: modelFailureReason(run),
+        attempts: run.attempts,
+        ...base
+      });
+    }
+  } catch (err) {
+    recordSensitive(null, {
+      status: "error",
+      reason: "screening crashed: " + clip((err && err.message) || err, 200)
+    });
+  }
 }
 
 function formatMessage(draft) {
@@ -1515,8 +1657,13 @@ async function main() {
   // model call: an unavailable, disabled or timed-out model must not turn the
   // screening off. Its result is published even if nothing else succeeds.
   localSensitive = scanSensitiveDiff(readDiff());
-  recordSensitive(null);
+  recordSensitive(null, { status: "pending" });
+  // Two independent model calls: the message needs only the agent reply, the
+  // screen only the staged paths and added lines. Start the screen first so
+  // they overlap; neither can make the other fail.
+  const screen = aiScreen();
   const draft = (await aiDraft(text, fallback)) || fallback;
+  await screen;
   if (!draft.subject) draft.subject = fallback.subject;
   process.stdout.write(formatMessage(draft));
 }
@@ -1539,7 +1686,8 @@ module.exports = {
   parsePayload, pickLine, cleanLine, fileListSubject, localDraft, validate,
   formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider,
   loadWorkbuddyProvider, loadClaudeProvider, loadClaudeCliProvider,
-  claudeModelCandidates, CLI_MODEL, findClaudeCli, buildPrompt,
+  claudeModelCandidates, CLI_MODEL, findClaudeCli,
+  buildMessagePrompt, buildScreenPrompt, addedLinesView, parseDiffAdditions,
   parseCliEnvelope, runClaudeCli, lastAssistantFromTranscript, readSseText,
   changedFiles, readDiff, collectSensitive, writeSensitive,
   scanSensitiveDiff, matchStaged, normalizeRepoPath, MAX_SENSITIVE
