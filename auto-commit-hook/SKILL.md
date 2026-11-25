@@ -73,8 +73,7 @@ at runtime; replace them with the resolved values before running a command.
 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
-The script stages the skill at `<skill-dir>` and registers no hook. Use a
-raw.githubusercontent URL — piping the github.com page feeds HTML to bash.
+The script stages the skill at `<skill-dir>` and registers no hook.
 
 ### The hook
 
