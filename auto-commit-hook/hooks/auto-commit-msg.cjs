@@ -98,7 +98,9 @@
 //         AUTOCOMMIT_AI_TOTAL_MS       budget per call (default 13000 over HTTP,
 //                                     20000 for claude -p); the call runs in
 //                                     parallel with the other one
-// stdout: full commit message text (Conventional Commits subject + AI body)
+// stdout: the commit message text, or nothing when no model produced a usable
+//         draft; auto-commit.sh then writes the file-list fallback ("chore:
+//         update ...") from the index left after both exclusion layers.
 //
 // Each turn makes two independent model calls, started together:
 //   - message: the agent's final reply -> Conventional Commits subject + body
@@ -107,8 +109,8 @@
 //     recall-biased policy and a small output budget. It is a separate call so
 //     it cannot truncate or break the message, and vice versa; its outcome is
 //     recorded under "sensitive" and never blocks the message path.
-// Any failure falls back to local heuristics/deterministic screening so the
-// hook never blocks or fails the turn.
+// Any model failure leaves the message to the shell's deterministic file list;
+// the deterministic screening always runs, so the hook never blocks the turn.
 "use strict";
 
 const { spawn } = require("child_process");
@@ -207,17 +209,6 @@ function readPayload() {
   let raw = "";
   try { raw = fs.readFileSync(0, "utf8"); } catch {}
   return parsePayload(raw);
-}
-
-function pickLine(text) {
-  const noise = l => !/\S/.test(l) ||
-    /^\s*(```|~~~|#{1,6}\s*$|>+\s*$|[-*_]{3,}\s*$)/.test(l) ||
-    /^\s*\|.*\|\s*$/.test(l);
-  const generic = l => /^\s*(?:#{1,6}\s*)?(?:以下(?:是|为)[^\n]*|改动内容|变更内容|修改内容|改动说明|变更说明|完成情况|工作内容|完成总结|总结|摘要|summary|changes?|done|完成|已完成)\s*[:：]?\s*$/i.test(l);
-  for (const line of text.split(/\r?\n/)) {
-    if (!noise(line) && !generic(line)) return line;
-  }
-  return "";
 }
 
 function cleanLine(line) {
@@ -578,62 +569,6 @@ async function httpErrorDetail(res) {
 
 function pushAttempt(attempts, attempt) {
   if (attempts.length < 12) attempts.push(attempt);
-}
-
-function inferTypeFromFiles() {
-  const files = changedFiles();
-  const all = re => files.length > 0 && files.every(p => re.test(p));
-  if (all(/(^|\/)(docs?|documentation)\/|\.(md|mdx|rst|txt)$|(^|\/)readme(\.[a-z]+)?$|(^|\/)licen[cs]e/i)) return "docs";
-  if (all(/(^|\/)(__tests__|tests?|specs?)\/|\.(test|spec)\.[^/]+$|_(test|spec)\.[^/]+$/i)) return "test";
-  if (all(/(^|\/)\.github\/workflows\/|(^|\/)\.gitlab-ci\.ya?ml$|(^|\/)jenkinsfile$|(^|\/)\.circleci\//i)) return "ci";
-  if (all(/(^|\/)(package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|go\.mod|go\.sum|cargo\.toml|cargo\.lock|pyproject\.toml|poetry\.lock|requirements[^/]*\.txt|dockerfile|makefile|cmakelists\.txt|build\.gradle|pom\.xml)$/i)) return "build";
-  return "";
-}
-
-// Mechanical subject for replies with no usable line: name the first two
-// changed files rather than only counting them, e.g.
-// "update a.txt, b.txt and 4 more files". Basenames keep the 60-character
-// subject readable even for deep paths.
-function fileListSubject(files) {
-  if (!files.length) return "update workspace";
-  const names = files.map(f => String(f).replace(/\\/g, "/").split("/").pop());
-  const withCount = n => {
-    const rest = files.length - n;
-    return {
-      label: names.slice(0, n).join(", "),
-      suffix: rest ? " and " + rest + " more " + (rest === 1 ? "file" : "files") : ""
-    };
-  };
-  // Two names when they fit; otherwise show one and count the rest, so the
-  // "and N more files" suffix always matches the files left out.
-  let { label, suffix } = withCount(Math.min(2, files.length));
-  if (Array.from("update " + label + suffix).length > 60) {
-    ({ label, suffix } = withCount(1));
-  }
-  const budget = 60 - Array.from("update " + suffix).length;
-  const chars = Array.from(label);
-  if (chars.length > budget) label = chars.slice(0, Math.max(0, budget - 1)).join("") + "…";
-  return "update " + label + suffix;
-}
-
-function localDraft(text) {
-  let line = pickLine(text);
-  let type = "";
-  const m = line.match(new RegExp("^\\s*(" + TYPES.join("|") + ")(?:\\([^)]*\\))?!?:\\s*(.*)$", "i"));
-  if (m) {
-    type = m[1].toLowerCase();
-    line = m[2];
-  }
-  line = cleanLine(line);
-  if (!line) {
-    // Nothing usable in the reply (or the empty payload of a crashed turn):
-    // describe the staged files themselves instead of a bare count.
-    return { type: "chore", subject: fileListSubject(changedFiles()), body: [] };
-  }
-  if (!type) type = inferTypeFromText(text) || inferTypeFromFiles() || "chore";
-  const chars = Array.from(line);
-  if (chars.length > 60) line = chars.slice(0, 60).join("") + "…";
-  return { type, subject: line, body: [] };
 }
 
 function loadZcodeProvider(notes) {
@@ -1547,8 +1482,10 @@ function runPrompt(provider, prompt, opts, accept) {
   return runHttpModels(provider, prompt, opts, accept);
 }
 
-// Message task: the agent's final reply is its only substantive input.
-async function aiDraft(text, fallback) {
+// Message task: the agent's final reply is its only substantive input. A
+// missing or unusable answer prints nothing; the shell hook then writes the
+// file-list placeholder from the index that both exclusion layers left behind.
+async function aiDraft(text) {
   if (process.env.AUTOCOMMIT_NO_AI === "1") {
     writeAiStatus({ status: "disabled", reason: "AUTOCOMMIT_NO_AI=1" });
     return null;
@@ -1574,7 +1511,7 @@ async function aiDraft(text, fallback) {
   const opts = modelBudget(isCli, started, 600,
     "response was not usable commit JSON");
   const run = await runPrompt(provider, buildMessagePrompt(text), opts,
-    raw => validate(raw, fallback));
+    raw => validate(raw, { type: "chore" }));
   const base = {
     source: provider.source,
     transport: isCli ? "cli" : "http",
@@ -1652,7 +1589,6 @@ function formatMessage(draft) {
 
 async function main() {
   const text = readPayload();
-  const fallback = localDraft(text);
   // The deterministic content screen runs before, and independently of, the
   // model call: an unavailable, disabled or timed-out model must not turn the
   // screening off. Its result is published even if nothing else succeeds.
@@ -1662,16 +1598,17 @@ async function main() {
   // screen only the staged paths and added lines. Start the screen first so
   // they overlap; neither can make the other fail.
   const screen = aiScreen();
-  const draft = (await aiDraft(text, fallback)) || fallback;
+  const draft = await aiDraft(text);
   await screen;
-  if (!draft.subject) draft.subject = fallback.subject;
-  process.stdout.write(formatMessage(draft));
+  // No draft means no stdout: the shell builds the fallback subject after both
+  // exclusion layers, so the message can never name a file the gate removed.
+  if (draft) process.stdout.write(formatMessage(draft));
 }
 
 if (require.main === module) {
   // Never fail the hook: any unexpected error falls back to the shell's
   // generic subject. The failure itself still goes into the AI status record
-  // so last-run.json can explain why the message is heuristic.
+  // so last-run.json can explain why the message is the placeholder.
   main().catch(err => {
     if (!aiStatusWritten) {
       writeAiStatus({
@@ -1683,7 +1620,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  parsePayload, pickLine, cleanLine, fileListSubject, localDraft, validate,
+  parsePayload, cleanLine, validate,
   formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider,
   loadWorkbuddyProvider, loadClaudeProvider, loadClaudeCliProvider,
   claudeModelCandidates, CLI_MODEL, findClaudeCli,

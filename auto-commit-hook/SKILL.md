@@ -15,8 +15,9 @@ description: >-
 # Auto-commit hook
 
 Commits workspace changes once per agent turn through a `Stop` hook. Each commit
-gets a Conventional Commits subject and an AI-written body, falling back to
-local heuristics when no model is available; obvious sensitive files are
+gets a Conventional Commits subject and an AI-written body; when no model
+produces a usable draft the message is a deterministic file list
+(`chore: update ...`). Obvious sensitive files are
 excluded, and the hook always exits 0 — it never blocks or fails a turn.
 
 ## Before you act
@@ -196,8 +197,8 @@ anything else.
 - `disabled: yes` — say the hook is paused, not uninstalled; `恢复 hook`
   resumes it without a reinstall.
 - `ai: unavailable` / `skipped` / `disabled` / `FAILED` (`error` in `--json`)
-  — say the commit still succeeded with a heuristic message; it is diagnostics,
-  not a failed commit, and `FAILED` lists per-model failures.
+  — say the commit still succeeded with a file-list placeholder message; it is
+  diagnostics, not a failed commit, and `FAILED` lists per-model failures.
 - `enabled: (n/a for command hooks)` — normal for command-string hosts; do not
   report it as a problem.
 - With `--update`, quote `differing:` file names; `up to date` on both lines
@@ -237,7 +238,8 @@ anything else.
   offer `<skill-dir>/llm-config.json` and its format if needed).
 - When `ai` shows `transport: cli`, say the message came from the local Claude
   Code login state; if it says `Not logged in`, the commit still succeeded
-  with heuristics and retries automatically once the user logs in again.
+  with the file-list placeholder and retries automatically once the user logs
+  in again.
 
 ## Safety
 

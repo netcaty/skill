@@ -3,8 +3,9 @@
 # agent turn.
 # Commit message: auto-commit-msg.cjs turns the agent's final reply (Stop hook
 # stdin JSON field last_assistant_message) into a Conventional Commits subject
-# plus an AI-written body; a local heuristic is used when the model is
-# unavailable. The model source follows the detected agent, exported to the
+# plus an AI-written body; a deterministic file-list message ("chore: update
+# ...") is used when no model produces a usable draft. The model source follows
+# the detected agent, exported to the
 # helper as AUTOCOMMIT_AGENT: WorkBuddy/CodeBuddy use the per-session
 # WORKBUDDY_VLM_* environment endpoint, ZCode reads provider_config.json, and
 # Claude Code uses the session's ANTHROPIC_* endpoint/model environment, or
@@ -23,7 +24,7 @@
 # prints the last outcome. The commit-message model attempt is recorded in
 # last-run.json under "ai" even when the commit succeeds: ok (source/model/ms),
 # disabled, skipped, unavailable (with the checked provider sources) or error
-# (with each model's failure), so a heuristic message is explainable.
+# (with each model's failure), so a placeholder message is explainable.
 # Claude Code also gets a non-blocking systemMessage
 # JSON on stdout; AUTOCOMMIT_NOTIFY_STDOUT=1/0 forces that channel on/off for
 # other hosts.
@@ -287,11 +288,10 @@ while IFS= read -r f; do
 done <<EOF
 $sensitive_names
 EOF
-# Display copy for the fallback subject (unquoted); the helper gets the exact
-# NUL-separated list through CHANGED_FILE.
-changed=$(git -c core.quotePath=false diff --cached --name-only 2>/dev/null | head -n 200)
+# Nothing left to commit if layer 1 excluded everything. The fallback subject
+# is built later from the index, after layer 2 has also run.
 file_count=$(git diff --cached --name-only -z 2>/dev/null | tr -cd '\000' | wc -c | tr -d ' ')
-[ "$file_count" -gt 0 ] || exit 0  # every staged change was excluded
+[ "$file_count" -gt 0 ] || exit 0
 
 helper="$script_dir/auto-commit-msg.cjs"
 
@@ -419,25 +419,10 @@ elif [ -z "$runtime" ]; then
 else
   printf '%s\n' '{"status":"unavailable","reason":"auto-commit-msg.cjs not found next to the hook"}' > "$ai_status"
 fi
-if [ ! -s "$msgfile" ]; then
-  # Last-resort subject when the helper produced nothing: name the first two
-  # staged files, matching the helper's own file-list fallback.
-  names=$(printf '%s\n' "$changed" | head -n 2 | sed 's#.*/##' \
-    | awk 'NR==1{line=$0; next} {line=line ", " $0} END{print line}')
-  rest=$((file_count > 2 ? file_count - 2 : 0))
-  more=""
-  if [ "$rest" -eq 1 ]; then more=" and 1 more file"
-  elif [ "$rest" -gt 1 ]; then more=" and $rest more files"; fi
-  if [ -n "$names" ]; then
-    printf 'chore: update %s%s\n' "$names" "$more" > "$msgfile"
-  else
-    printf 'chore: update workspace\n' > "$msgfile"
-  fi
-  # The helper normally writes an AI record even when it falls back to
-  # heuristics; an empty record here means it produced nothing at all.
-  if [ ! -s "$ai_status" ]; then
-    printf '%s\n' '{"status":"error","reason":"message helper produced no output"}' > "$ai_status"
-  fi
+if [ ! -s "$ai_status" ]; then
+  # The helper normally writes an AI record even when it has no draft; an
+  # empty record here means it produced nothing at all.
+  printf '%s\n' '{"status":"error","reason":"message helper produced no output"}' > "$ai_status"
 fi
 
 # Embed the helper's compact JSON as the "ai" field of last-run.json. The
@@ -476,6 +461,23 @@ git diff --cached --quiet 2>/dev/null && {
   rm -f "$msgfile" "$difffile" "$sensitive_out" "$ai_status" "$changed_file"
   exit 0
 }
+# No usable model draft: describe what remains in the index. Both exclusion
+# layers have run by now, so the message never names a file the gate removed.
+if [ ! -s "$msgfile" ]; then
+  changed=$(git -c core.quotePath=false diff --cached --name-only 2>/dev/null | head -n 200)
+  file_count=$(git diff --cached --name-only -z 2>/dev/null | tr -cd '\000' | wc -c | tr -d ' ')
+  names=$(printf '%s\n' "$changed" | head -n 2 | sed 's#.*/##' \
+    | awk 'NR==1{line=$0; next} {line=line ", " $0} END{print line}')
+  rest=$((file_count > 2 ? file_count - 2 : 0))
+  more=""
+  if [ "$rest" -eq 1 ]; then more=" and 1 more file"
+  elif [ "$rest" -gt 1 ]; then more=" and $rest more files"; fi
+  if [ -n "$names" ]; then
+    printf 'chore: update %s%s\n' "$names" "$more" > "$msgfile"
+  else
+    printf 'chore: update workspace\n' > "$msgfile"
+  fi
+fi
 
 commit_output=$(git -c commit.gpgsign=false commit -F "$msgfile" --no-verify 2>&1)
 commit_status=$?

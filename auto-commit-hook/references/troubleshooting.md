@@ -19,12 +19,13 @@ of band instead of aborting:
   same JSON channel for testing.
 - Expected skips — not a repository, clean tree, merge/rebase in progress,
   detached HEAD — are not failures and are never reported. A missing model
-  also falls back to local heuristics by design and is not a failure, but the
-  attempt is recorded in `last-run.json` under `ai`: `ok` (source, model,
-  duration), `disabled` (`AUTOCOMMIT_NO_AI=1`), `skipped` (empty agent reply),
-  `unavailable` (the provider sources checked and why each was empty), or
-  `error` (each model's HTTP/network/timeout failure). `status` prints it as
-  an `ai:` line. Only the message is heuristic; the commit itself succeeds.
+  also falls back to a file-list placeholder by design and is not a failure,
+  but the attempt is recorded in `last-run.json` under `ai`: `ok` (source,
+  model, duration), `disabled` (`AUTOCOMMIT_NO_AI=1`), `skipped` (empty agent
+  reply), `unavailable` (the provider sources checked and why each was empty),
+  or `error` (each model's HTTP/network/timeout failure). `status` prints it as
+  an `ai:` line. Only the message is the placeholder; the commit itself
+  succeeds.
 - If a sensitive file cannot be unstaged, the hook aborts the commit, unstages
   everything, and reports stage `sensitive gate` instead of risking a leak.
 
@@ -60,9 +61,9 @@ git -C /path/to/repo log -1
   path. On ZCode also confirm `hooks.enabled: true`; on Claude Code check
   workspace trust. If git reports `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
-- **Generic or subject-only message**: the helper fell back to local heuristics
-  (`chore: update a.txt, b.txt and N more files` when it produced no usable
-  subject) or did not run.
+- **Generic or subject-only message**: no model produced a usable draft, so the
+  message is the deterministic file list (`chore: update a.txt, b.txt and N
+  more files`), or the helper did not run.
   `status` prints an `ai:` line: `disabled` means `AUTOCOMMIT_NO_AI=1`,
   `skipped` means the Stop payload had no final message, `unavailable` lists
   every provider source checked and why it was empty, and `error` lists each
@@ -100,7 +101,8 @@ git -C /path/to/repo log -1
   `AUTOCOMMIT_IN_HOOK=1` makes any Stop it fires exit before git work, so a
   nested commit cannot happen. If an `ai:` attempt says `Not logged in`, run
   `/login` in Claude Code and let the next turn retry — the commit already
-  succeeded with heuristics. The CLI already runs on haiku (fixed); if it is
+  succeeded with the file-list placeholder. The CLI already runs on haiku
+  (fixed); if it is
   still slow, raise `AUTOCOMMIT_AI_TOTAL_MS` (keep it below the hook timeout; the
   installer's default is 30 s). If nothing commits, check that the project is
   trusted, no merged settings file sets `disableAllHooks` /

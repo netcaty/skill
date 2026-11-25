@@ -195,7 +195,7 @@ test("stdout diagnostics before the JSON envelope are tolerated", async () => {
   assert.strictEqual(readStatus(dir).status, "ok");
 });
 
-test("claude -p failure is diagnostic and falls back to heuristics", async () => {
+test("claude -p failure is diagnostic and leaves the message to the shell", async () => {
   const dir = tmp();
   const env = cliCase(dir, { FAKE_MODE: "fail" });
 
@@ -203,7 +203,9 @@ test("claude -p failure is diagnostic and falls back to heuristics", async () =>
     JSON.stringify({ last_assistant_message: "修复了问题" }));
 
   assert.strictEqual(res.code, 0, res.stderr);
-  assert.match(res.stdout, /^fix: /);
+  // No intent guessing from the reply: the helper prints nothing, and
+  // auto-commit.sh writes the file-list subject after the exclusion layers.
+  assert.strictEqual(res.stdout, "");
   const status = readStatus(dir);
   assert.strictEqual(status.status, "error");
   assert.strictEqual(status.transport, "cli");

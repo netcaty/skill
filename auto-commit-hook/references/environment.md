@@ -10,7 +10,7 @@ to the defaults shown.
 | `AUTOCOMMIT_INSTALL_MODE` | force `local` or `download` |
 | `AUTOCOMMIT_NODE` | Node runtime for `run.sh` |
 | `AUTOCOMMIT_BASH` | bash executable registered in the hook |
-| `AUTOCOMMIT_NO_AI=1` | skip the model call; use a heuristic message |
+| `AUTOCOMMIT_NO_AI=1` | skip both model calls; use the file-list placeholder message |
 | `AUTOCOMMIT_LLM_URL` / `_KEY` / `_MODEL` | override the saved LLM config |
 | `AUTOCOMMIT_LLM_CONFIG` | alternate `llm-config.json` path |
 | `AUTOCOMMIT_CLAUDE_BIN` | explicit `claude` executable for the CLI fallback (default: `CLAUDE_CODE_EXECPATH`, then `PATH`) |

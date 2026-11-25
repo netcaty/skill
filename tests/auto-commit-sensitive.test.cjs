@@ -145,6 +145,8 @@ test("screening still runs when the final message is empty", async () => {
   const res = await runHelper(c.env, JSON.stringify({}));
 
   assert.strictEqual(res.code, 0, res.stderr);
+  // No draft and no message: the shell writes the placeholder after the gate.
+  assert.strictEqual(res.stdout, "");
   assert.deepStrictEqual(readOut(c.out), ["src/db.ts"]);
   const status = JSON.parse(fs.readFileSync(c.status, "utf8"));
   assert.strictEqual(status.status, "skipped");
@@ -308,6 +310,8 @@ test("hook excludes a non-ASCII secret name without naming it in the message", (
   const body = git(repo, ["log", "-1", "--format=%B"]).stdout;
   assert.ok(!body.includes("中文/.env"), "the excluded path must not appear in the message");
   assert.ok(!/excluded|sensitive/i.test(body), "the message must not mention the gate");
+  const subject = git(repo, ["log", "-1", "--format=%s"]).stdout.trim();
+  assert.strictEqual(subject, "chore: update notes.txt");
 });
 
 test("hook unstages a content-level secret when no model runs", () => {
@@ -327,4 +331,7 @@ test("hook unstages a content-level secret when no model runs", () => {
   assert.ok(!body.includes("settings.txt"),
     "the excluded path must not appear in the message");
   assert.ok(!/excluded|sensitive/i.test(body), "the message must not mention the gate");
+  const subject = git(repo, ["log", "-1", "--format=%s"]).stdout.trim();
+  assert.strictEqual(subject, "chore: update notes.txt",
+    "the fallback names only what survived the gate");
 });
