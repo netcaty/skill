@@ -69,19 +69,12 @@ at runtime; replace them with the resolved values before running a command.
 
 ### The skill (no local checkout)
 
-For machines that only have the repository URL:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
-The script stages this skill directory at `<skill-dir>` and registers no hook.
-Download mode fetches the repository tarball in one request, so it needs `curl`
-and `tar` and has no per-file fallback; `AUTOCOMMIT_INSTALL_ARCHIVE` overrides
-the URL. On hosts that scan only their own `skills/` directory it also exposes
-the staged copy at `<skills-dir>` (junction, symlink, or copy as a fallback); set
-`AUTOCOMMIT_NO_SKILL_LINK=1` to skip that. Use a raw.githubusercontent URL —
-piping the github.com page feeds HTML to bash.
+The script stages the skill at `<skill-dir>` and registers no hook. Use a
+raw.githubusercontent URL — piping the github.com page feeds HTML to bash.
 
 ### The hook
 
