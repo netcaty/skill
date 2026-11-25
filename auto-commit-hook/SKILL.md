@@ -131,24 +131,42 @@ Removes only auto-commit entries and cleans up a config file it created; use
 `disable` for a temporary pause. `--purge` also removes copied scripts when
 unreferenced (`backups/` is kept).
 
-## Commit-message model
+## Hook config
 
 Messages use the host's session provider by default; on Claude Code without a
 provider or saved endpoint, the local `claude` CLI login (`haiku`) is used.
-`<skill-dir>/config.json` can supply a manual endpoint and runtime settings, and
-environment variables outrank it per key. The keys, defaults and priority are
-in [environment](references/environment.md).
+`<skill-dir>/config.json` stores an optional manual endpoint and runtime
+settings — see [environment](references/environment.md) for keys, defaults, and
+priority.
 
-The file is user-managed: never ask for, accept, or print an API key in chat,
-and never pass one as a CLI argument. Point the user at
-`<skill-dir>/config.json` to edit, or use:
+**Never ask or allow the user to manually edit `<skill-dir>/config.json`** (do
+not point them to edit the file by hand or provide JSON for manual editing);
+`bash scripts/run.sh config` is its sole writer.
 
 ```bash
-bash scripts/run.sh config --show      # effective values and sources; key masked
+bash scripts/run.sh config --show            # effective values and sources; key masked
 bash scripts/run.sh config --set <key>=<value>
 bash scripts/run.sh config --unset <key>
 bash scripts/run.sh config --clear
 ```
+
+- Run `--show`, `--set`, `--unset`, and `--clear` yourself for inspection and
+  non-secret settings (`noAi`, `noAiScreen`, `claudeBin`, `aiTimeoutMs`,
+  `aiTotalMs`, `sourceDir`).
+- Never ask for, accept, or print an API key in chat, never guess or
+  reconstruct a masked key printed by `--show`, and never pass a key in a
+  command you run. If the user needs a manual endpoint (`url`/`key`/`model`),
+  have them set `AUTOCOMMIT_LLM_*` environment variables or run
+  `bash <skill-dir>/scripts/run.sh config --url <url> --key <key> --model <models>`
+  themselves outside chat — never by hand-editing `config.json`.
+- Whenever a saved manual endpoint is involved, mention that it outranks the
+  host's session provider; environment variables still win per key.
+- When `--show` reports `(session provider)` for `url`/`key`/`model`, or
+  `--clear` prints `Cleared <file>`, say the host's session provider is used.
+- When `ai` shows `transport: cli`, say the message came from the local Claude
+  Code login state; if it says `Not logged in`, the commit still succeeded with
+  the file-list placeholder and retries automatically once the user logs in
+  again.
 
 ## What to tell the user
 
@@ -217,20 +235,6 @@ anything else.
   files that prompted it).
 - Say hook assets take effect on the next Stop, while `SKILL.md`, `references/`
   and `scripts/` changes need a new session.
-
-### For the hook config
-
-- Never guess or reconstruct a masked key printed by `config --show` (and never
-  request or print an API key in chat).
-- Whenever a saved manual endpoint is involved, mention that it outranks the
-  host's session provider; environment variables still win per key.
-- When `--show` reports `(session provider)` for url/key/model, say the host's
-  session provider is used (offer `<skill-dir>/config.json` and its format if
-  needed). `--clear` prints `Cleared <file>`.
-- When `ai` shows `transport: cli`, say the message came from the local Claude
-  Code login state; if it says `Not logged in`, the commit still succeeded
-  with the file-list placeholder and retries automatically once the user logs
-  in again.
 
 ## Safety
 
