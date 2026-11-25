@@ -33,6 +33,10 @@ Check live state instead of reciting from this file:
 bash scripts/run.sh status --all
 ```
 
+**Do not read or analyze the scripts under `hooks/` or `scripts/`.** Answer from
+this document and the commands' printed output, and run the documented command
+rather than tracing the code. Source review is only for maintaining the skill.
+
 - Run `status --doctor` before explaining why commits are missing.
 - Run `status --update` before saying whether installed files are current.
 - Read the matching [reference file](#reference-files) before explaining
