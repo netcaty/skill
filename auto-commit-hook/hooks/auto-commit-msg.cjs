@@ -325,6 +325,32 @@ function inferTypeFromFiles() {
   return "";
 }
 
+// Mechanical subject for replies with no usable line: name the first two
+// changed files rather than only counting them, e.g.
+// "update a.txt, b.txt and 4 more files". Basenames keep the 60-character
+// subject readable even for deep paths.
+function fileListSubject(files) {
+  if (!files.length) return "update workspace";
+  const names = files.map(f => String(f).replace(/\\/g, "/").split("/").pop());
+  const withCount = n => {
+    const rest = files.length - n;
+    return {
+      label: names.slice(0, n).join(", "),
+      suffix: rest ? " and " + rest + " more " + (rest === 1 ? "file" : "files") : ""
+    };
+  };
+  // Two names when they fit; otherwise show one and count the rest, so the
+  // "and N more files" suffix always matches the files left out.
+  let { label, suffix } = withCount(Math.min(2, files.length));
+  if (Array.from("update " + label + suffix).length > 60) {
+    ({ label, suffix } = withCount(1));
+  }
+  const budget = 60 - Array.from("update " + suffix).length;
+  const chars = Array.from(label);
+  if (chars.length > budget) label = chars.slice(0, Math.max(0, budget - 1)).join("") + "…";
+  return "update " + label + suffix;
+}
+
 function localDraft(text) {
   let line = pickLine(text);
   let type = "";
@@ -334,6 +360,11 @@ function localDraft(text) {
     line = m[2];
   }
   line = cleanLine(line);
+  if (!line) {
+    // Nothing usable in the reply (or the empty payload of a crashed turn):
+    // describe the staged files themselves instead of a bare count.
+    return { type: "chore", subject: fileListSubject(changedFiles()), body: [] };
+  }
   if (!type) type = inferTypeFromText(text) || inferTypeFromFiles() || "chore";
   const chars = Array.from(line);
   if (chars.length > 60) line = chars.slice(0, 60).join("") + "…";
@@ -832,12 +863,6 @@ function formatMessage(draft) {
 async function main() {
   const text = readPayload();
   const fallback = localDraft(text);
-
-  if (!fallback.subject) {
-    const n = changedFiles().length;
-    fallback.subject = n ? "update " + n + (n === 1 ? " file" : " files") : "update workspace";
-  }
-
   const draft = (await aiDraft(text, fallback)) || fallback;
   if (!draft.subject) draft.subject = fallback.subject;
   process.stdout.write(formatMessage(draft));
@@ -857,4 +882,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parsePayload, pickLine, cleanLine, localDraft, validate, formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, claudeModelCandidates, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };
+module.exports = { parsePayload, pickLine, cleanLine, fileListSubject, localDraft, validate, formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider, loadWorkbuddyProvider, loadClaudeProvider, claudeModelCandidates, lastAssistantFromTranscript, readSseText, changedFiles, readDiff, collectSensitive, writeSensitive };

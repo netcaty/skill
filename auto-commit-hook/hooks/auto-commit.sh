@@ -389,8 +389,19 @@ else
   printf '%s\n' '{"status":"unavailable","reason":"auto-commit-msg.cjs not found next to the hook"}' > "$ai_status"
 fi
 if [ ! -s "$msgfile" ]; then
-  if [ "$file_count" -eq 1 ]; then unit=file; else unit=files; fi
-  printf 'chore: update %s %s\n' "$file_count" "$unit" > "$msgfile"
+  # Last-resort subject when the helper produced nothing: name the first two
+  # staged files, matching the helper's own file-list fallback.
+  names=$(printf '%s\n' "$changed" | head -n 2 | sed 's#.*/##' \
+    | awk 'NR==1{line=$0; next} {line=line ", " $0} END{print line}')
+  rest=$((file_count > 2 ? file_count - 2 : 0))
+  more=""
+  if [ "$rest" -eq 1 ]; then more=" and 1 more file"
+  elif [ "$rest" -gt 1 ]; then more=" and $rest more files"; fi
+  if [ -n "$names" ]; then
+    printf 'chore: update %s%s\n' "$names" "$more" > "$msgfile"
+  else
+    printf 'chore: update workspace\n' > "$msgfile"
+  fi
   # The helper normally writes an AI record even when it falls back to
   # heuristics; an empty record here means it produced nothing at all.
   if [ ! -s "$ai_status" ]; then

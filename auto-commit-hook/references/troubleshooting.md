@@ -61,7 +61,8 @@ git -C /path/to/repo log -1
   workspace trust. If git reports `dubious ownership`, run:
   `git config --global --add safe.directory <repo>`
 - **Generic or subject-only message**: the helper fell back to local heuristics
-  (`chore: update N files` when it produced no usable subject) or did not run.
+  (`chore: update a.txt, b.txt and N more files` when it produced no usable
+  subject) or did not run.
   `status` prints an `ai:` line: `disabled` means `AUTOCOMMIT_NO_AI=1`,
   `skipped` means the Stop payload had no final message, `unavailable` lists
   every provider source checked and why it was empty, and `error` lists each

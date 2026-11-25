@@ -283,6 +283,11 @@ anything else. Below, `install`, `status`, `disable` and so on are
 - Always name the scope: `user` covers every project, `workspace` only the
   resolved repo, and the config file it wrote. Say a new session (or reopening
   the workspace) picks up the registration.
+- With the hook enabled, point the user at [Safety](#safety): every turn it
+  commits all tracked and untracked changes that are not ignored, including
+  changes made before it was installed, and the sensitive-file filter is not a
+  security boundary. Tell them to review `.gitignore` before relying on it —
+  ignored files are never committed.
 - When the output shows `paused : yes` or `Note: auto-commit is paused`, say
   the hook stays paused and `恢复 hook` resumes it without a reinstall.
 - When the output shows `backup :`, quote the path only if the user asks about
