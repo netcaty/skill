@@ -4,8 +4,8 @@
 # Two ways to run this installer — both stage the skill directory to
 # ~/.agents/skills/auto-commit-hook/ and register NOTHING:
 #
-# 1. curl (no git needed; a raw URL — piping the github.com page feeds HTML
-#    to bash):
+# 1. curl (no git needed; curl + tar, and use a raw URL — piping the
+#    github.com page feeds HTML to bash):
 #      curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 #
 # 2. git clone (the script detects the checkout next to itself and copies the
@@ -26,9 +26,7 @@
 # AUTOCOMMIT_NO_SKILL_LINK=1 to skip that.
 #
 # Env overrides (mainly for testing):
-#   AUTOCOMMIT_INSTALL_RAW     base URL for per-file downloads (download mode)
 #   AUTOCOMMIT_INSTALL_ARCHIVE tarball URL for download mode
-#   AUTOCOMMIT_INSTALL_FORMAT  archive (default) or files
 #   AUTOCOMMIT_INSTALL_DIR     where the skill directory is staged
 #   AUTOCOMMIT_INSTALL_MODE    force local|download
 set -euo pipefail
@@ -42,7 +40,6 @@ esac
 
 REPO="netcaty/skill"
 BRANCH="main"
-RAW="${AUTOCOMMIT_INSTALL_RAW:-https://raw.githubusercontent.com/$REPO/$BRANCH}"
 SKILL_DIR="${AUTOCOMMIT_INSTALL_DIR:-$HOME/.agents/skills/auto-commit-hook}"
 
 log() { printf '[auto-commit] %s\n' "$*"; }
@@ -76,59 +73,32 @@ if [ "$MODE" = local ]; then
 else
   command -v curl >/dev/null 2>&1 \
     || fail "curl not found; install curl or use the git clone method."
-
-  # Per-file list for the fallback path; keep in sync with the skill folder.
-  FILES="SKILL.md references/environment.md references/troubleshooting.md references/safety.md hooks/auto-commit.sh hooks/auto-commit-msg.cjs scripts/lib.cjs scripts/install.cjs scripts/uninstall.cjs scripts/disable.cjs scripts/enable.cjs scripts/status.cjs scripts/setup-llm.cjs scripts/run.sh"
+  command -v tar >/dev/null 2>&1 \
+    || fail "tar not found; install tar or use the git clone method."
 
   # One request for the repository tarball; it carries every shipped file, so
-  # this path needs no list. GitHub archives nest everything under a single
-  # top-level <repo>-<ref> directory.
-  fetch_archive() {
-    command -v tar >/dev/null 2>&1 || return 1
-    local url="${AUTOCOMMIT_INSTALL_ARCHIVE:-https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz}"
-    local tmp top="" d
-    tmp=$(mktemp -d 2>/dev/null) || return 1
-    log "fetching $url"
-    if ! curl -fsSL --connect-timeout 10 --max-time 120 "$url" 2>/dev/null \
-      | tar -xz -C "$tmp" 2>/dev/null; then
-      rm -rf "$tmp"
-      return 1
-    fi
-    for d in "$tmp"/*/; do
-      [ -d "$d" ] || continue
-      top=${d%/}
-      break
-    done
-    if [ -z "$top" ] || [ ! -f "$top/auto-commit-hook/SKILL.md" ]; then
-      rm -rf "$tmp"
-      return 1
-    fi
-    cp -R "$top/auto-commit-hook/." "$SKILL_DIR/"
-    rm -rf "$tmp"
-  }
-
-  fetch_files() {
-    local base="$RAW/auto-commit-hook" f
-    log "fetching skill files from $base"
-    for f in $FILES; do
-      mkdir -p "$SKILL_DIR/$(dirname "$f")"
-      curl -fsSL "$base/$f" -o "$SKILL_DIR/$f" || fail "download failed: $base/$f"
-      [ -s "$SKILL_DIR/$f" ] || fail "empty download: $f"
-    done
-  }
-
-  case "${AUTOCOMMIT_INSTALL_FORMAT:-archive}" in
-    archive)
-      if fetch_archive; then
-        log "installed from the repository archive"
-      else
-        log "archive download failed; falling back to per-file downloads"
-        fetch_files
-      fi
-      ;;
-    files) fetch_files ;;
-    *) fail "unknown AUTOCOMMIT_INSTALL_FORMAT (use archive or files)" ;;
-  esac
+  # there is no per-file list to maintain. GitHub archives nest everything
+  # under a single top-level <repo>-<ref> directory.
+  ARCHIVE="${AUTOCOMMIT_INSTALL_ARCHIVE:-https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz}"
+  TMP=$(mktemp -d 2>/dev/null) || fail "mktemp failed"
+  log "fetching $ARCHIVE"
+  if ! curl -fsSL --connect-timeout 10 --max-time 120 "$ARCHIVE" 2>/dev/null \
+    | tar -xz -C "$TMP" 2>/dev/null; then
+    rm -rf "$TMP"
+    fail "download failed: $ARCHIVE (check the network/proxy, use the git clone method, or set AUTOCOMMIT_INSTALL_ARCHIVE)"
+  fi
+  TOP=""
+  for d in "$TMP"/*/; do
+    [ -d "$d" ] || continue
+    TOP=${d%/}
+    break
+  done
+  if [ -z "$TOP" ] || [ ! -f "$TOP/auto-commit-hook/SKILL.md" ]; then
+    rm -rf "$TMP"
+    fail "unexpected archive layout: auto-commit-hook/SKILL.md not found"
+  fi
+  cp -R "$TOP/auto-commit-hook/." "$SKILL_DIR/"
+  rm -rf "$TMP"
 fi
 
 # Record where future updates should come from. status.cjs reads this file to

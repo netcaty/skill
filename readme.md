@@ -36,7 +36,7 @@ agent 会先请求执行该命令的权限，确认后即完成安装，效果�
 
 | 步骤 | 需要什么 |
 |---|---|
-| 安装 skill | bash + curl（方式一、方式三）或 git（方式二）；Windows 用 Git Bash，macOS 用自带 bash 即可 |
+| 安装 skill | bash + curl + tar（方式一、方式三）或 git（方式二）；Windows 用 Git Bash，macOS 用自带 bash 即可 |
 | 启用 hook | `bash scripts/run.sh install`（自动发现 node 或 ZCode / WorkBuddy 自带的 Electron，Windows 与 macOS 应用路径都会探测）+ git + bash |
 | 运行 hook（每回合） | git + bash；AI 提交信息额外需要可用的模型来源（Claude Code 下可直接复用 `claude` 的登录态，无需 API key），失败自动退化为文件列表式的 `chore:` 信息 |
 

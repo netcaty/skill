@@ -743,27 +743,26 @@ function installStatusIn(file) {
 // independently: this checkout/skill directory (SKILL_ROOT), the staged skill
 // directory (~/.agents/skills/auto-commit-hook/, written by install.sh) and
 // the agent's asset copy (installDir(), written by install.cjs). status.cjs
-// hashes UPDATABLE_FILES across them and reports which pairs differ.
+// hashes the files under them and reports which pairs differ; the skill-dir
+// comparison walks the source, so no file list has to be maintained.
 // ---------------------------------------------------------------------------
 
-// Everything install.sh stages. The per-file fallback in install.sh lists the
-// same files; keep the two in sync.
-const UPDATABLE_FILES = [
-  "SKILL.md",
-  "references/environment.md",
-  "references/troubleshooting.md",
-  "references/safety.md",
-  "hooks/auto-commit.sh",
-  "hooks/auto-commit-msg.cjs",
-  "scripts/lib.cjs",
-  "scripts/install.cjs",
-  "scripts/uninstall.cjs",
-  "scripts/disable.cjs",
-  "scripts/enable.cjs",
-  "scripts/status.cjs",
-  "scripts/setup-llm.cjs",
-  "scripts/run.sh"
-];
+// Editor/OS droppings that never count as drift.
+const IGNORED_FILES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+
+// Recursively list regular files under `dir` as forward-slash relative paths.
+function listFiles(dir, prefix) {
+  const out = [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    if (IGNORED_FILES.has(entry.name)) continue;
+    const rel = prefix ? prefix + "/" + entry.name : entry.name;
+    if (entry.isDirectory()) out.push(...listFiles(path.join(dir, entry.name), rel));
+    else if (entry.isFile()) out.push(rel);
+  }
+  return out;
+}
 
 // Where install.sh stages the skill directory (same default and env override
 // as its SKILL_DIR).
@@ -780,12 +779,20 @@ function hashFile(file) {
   }
 }
 
-// Hash-compare `files` (default UPDATABLE_FILES) between two directories.
-// Missing files are reported separately from differing content so a caller
-// can tell an incomplete install from a stale one.
+// Hash-compare `files` (or every file under srcDir when omitted) between two
+// directories. Missing files are reported separately from differing content so
+// a caller can tell an incomplete install from a stale one.
 function compareDirs(srcDir, dstDir, files) {
   const result = { same: true, differing: [], missingInSrc: [], missingInDst: [] };
-  for (const rel of files || UPDATABLE_FILES) {
+  let list;
+  try {
+    list = files || listFiles(srcDir);
+  } catch (err) {
+    result.same = false;
+    result.missingInSrc.push("<source unreadable: " + (err && err.message ? err.message : err) + ">");
+    return result;
+  }
+  for (const rel of list) {
     const srcHash = hashFile(path.join(srcDir, rel));
     const dstHash = hashFile(path.join(dstDir, rel));
     if (srcHash === null) { result.missingInSrc.push(rel); result.same = false; }
@@ -865,7 +872,6 @@ module.exports = {
   INSTALL_HELPER,
   STATE_FILE,
   DEFAULT_TIMEOUT_MS,
-  UPDATABLE_FILES,
   skillInstallDir,
   hashFile,
   compareDirs,
