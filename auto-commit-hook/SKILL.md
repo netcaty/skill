@@ -275,29 +275,6 @@ never claim a state `status` has not shown. If a command exits non-zero, quote
 its `Error:` line and the fix it names before suggesting anything else. Below,
 `install`, `status`, `disable` and so on are `bash scripts/run.sh` subcommands.
 
-### Dialog phrases
-
-- `安装 hook` / `启用自动提交` — run `install` (user scope); if any scope is
-  already installed, report that instead of adding a second one.
-- `项目级别启用 hook` — run `install --scope workspace`; if user scope is
-  installed, uninstall it first — two scopes commit twice per turn, and
-  `install.cjs` refuses both.
-- `禁用 hook` — run `status` first, then `disable`; it pauses the hook without
-  uninstalling, so leave the registration in place.
-- `恢复 hook` / `恢复自动提交` — run `enable`.
-- `卸载 hook` — run `status` first, then `uninstall` for every installed scope
-  (add `--scope workspace` where needed); keep the copied scripts unless the
-  user asks for `--purge`.
-- `更新 hook` / `更新 skill` — run `status --update` first, then refresh the
-  skill directory (checkout: `bash install.sh`; otherwise re-run the curl
-  one-liner), run `install`, and verify with `status --update`.
-- `查看 hook 状态` — run `status --all`; add `--json` for machine parsing,
-  `--update` for stale files, or `--doctor` for blockers.
-- `设置 LLM 配置` — never ask for the API key in chat and never run a command
-  that takes it; point the user at `<skill-dir>/llm-config.json` and the format
-  in [Commit-message model](#commit-message-model).
-- `查看 LLM 配置` / `清除 LLM 配置` — run `setup-llm --show` / `setup-llm --clear`.
-
 ### After install
 
 - Always name the scope: `user` covers every project, `workspace` only the
