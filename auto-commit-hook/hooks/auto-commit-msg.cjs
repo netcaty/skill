@@ -60,7 +60,10 @@
 //                                     with tools off where supported, an added
 //                                     settings layer disabling all hooks, and
 //                                     AUTOCOMMIT_IN_HOOK=1 so any Stop event it
-//                                     might still fire is a no-op
+//                                     might still fire is a no-op. Always asks
+//                                     for --model haiku (fixed, not
+//                                     configurable): a commit message does not
+//                                     need a larger model
 //         ANTHROPIC_MODEL / ANTHROPIC_SMALL_FAST_MODEL /
 //         ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL /
 //         CLAUDE_CODE_MODEL_CAPABILITIES
@@ -76,9 +79,9 @@
 //                                     is the provider's modelOrder (ZCode), the
 //                                     session model env (WorkBuddy) or
 //                                     ANTHROPIC_MODEL (claude), tried in order
-//                                     until one succeeds. The claude -p fallback
-//                                     uses the CLI's default model unless this
-//                                     is set
+//                                     until one succeeds. Does not affect the
+//                                     claude -p fallback, which always uses
+//                                     haiku
 //         AUTOCOMMIT_CLAUDE_BIN        explicit claude executable for the
 //                                     fallback; default is CLAUDE_CODE_EXECPATH,
 //                                     then a PATH lookup
@@ -604,15 +607,12 @@ function findClaudeCli() {
   return null;
 }
 
-// The fallback runs on the CLI's default model unless AUTOCOMMIT_LLM_MODEL pins
-// one; the empty string is a sentinel meaning "pass no --model". The session's
-// ANTHROPIC_* model ids are deliberately ignored: they are often proxy-specific
-// names a first-party endpoint does not know.
-function claudeCliModels() {
-  const override = process.env.AUTOCOMMIT_LLM_MODEL;
-  const models = override ? override.split(",").map(s => s.trim()).filter(Boolean) : [];
-  return models.length ? models : [""];
-}
+// The fallback always asks the CLI for haiku: a commit message is short and
+// structured, and the alias maps to whatever small model the account offers.
+// This is deliberately not configurable. The session's ANTHROPIC_* model ids
+// are ignored too: they are often proxy-specific names a first-party endpoint
+// does not know.
+const CLI_MODEL = "haiku";
 
 function loadClaudeCliProvider(notes) {
   if (process.env.AUTOCOMMIT_NO_AI === "1") {
@@ -629,7 +629,7 @@ function loadClaudeCliProvider(notes) {
       "claude executable not found (AUTOCOMMIT_CLAUDE_BIN / CLAUDE_CODE_EXECPATH / PATH)");
     return null;
   }
-  return { kind: "claude-cli", cli, models: claudeCliModels() };
+  return { kind: "claude-cli", cli, models: [CLI_MODEL] };
 }
 
 // Claude Code: no provider config file and no loopback proxy. The session's
@@ -1040,7 +1040,7 @@ async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs,
     for (const model of provider.models) {
       const budget = deadline - Date.now();
       if (budget < 1000) { budgetStopped = true; break; }
-      const attempt = { model: model || "cli-default" };
+      const attempt = { model };
       const attemptStart = Date.now();
       for (const tier of [1, 2, 3]) {
         const left = deadline - Date.now();
@@ -1086,7 +1086,7 @@ async function aiDraftCli(provider, promptText, fallback, perAttemptMs, totalMs,
                 status: "ok",
                 source: provider.source,
                 transport: "cli",
-                model: model || "cli-default",
+                model,
                 ms: Date.now() - started,
                 attempts
               });
@@ -1373,7 +1373,7 @@ module.exports = {
   parsePayload, pickLine, cleanLine, fileListSubject, localDraft, validate,
   formatMessage, loadProvider, MODEL_SOURCES, loadManualProvider,
   loadWorkbuddyProvider, loadClaudeProvider, loadClaudeCliProvider,
-  claudeModelCandidates, claudeCliModels, findClaudeCli, buildPrompt,
+  claudeModelCandidates, CLI_MODEL, findClaudeCli, buildPrompt,
   parseCliEnvelope, runClaudeCli, lastAssistantFromTranscript, readSseText,
   changedFiles, readDiff, collectSensitive, writeSensitive
 };

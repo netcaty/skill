@@ -103,12 +103,14 @@ test("claude -p fallback writes a conventional commit", async () => {
   assert.strictEqual(status.status, "ok");
   assert.strictEqual(status.source, "claude");
   assert.strictEqual(status.transport, "cli");
-  assert.strictEqual(status.model, "cli-default");
+  assert.strictEqual(status.model, "haiku");
 
   const seen = JSON.parse(fs.readFileSync(trace, "utf8"));
   assert.ok(seen.argv.includes("-p"));
   assert.ok(seen.argv.includes("--output-format"));
   assert.ok(seen.argv.includes("--settings"));
+  assert.strictEqual(seen.argv[seen.argv.indexOf("--model") + 1], "haiku",
+    "the CLI fallback must always ask for haiku");
   assert.ok(seen.argv.includes("--tools"));
   assert.strictEqual(seen.argv[seen.argv.indexOf("--tools") + 1], "",
     "an empty tool set must survive as an empty argument");

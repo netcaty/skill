@@ -253,8 +253,9 @@ own login (including subscription OAuth). The hook never reads credentials files
 or the Keychain, and does not use `--bare` (which refuses OAuth). The child runs
 in a temporary directory with all hooks disabled through an added settings
 layer, tools off where supported, and `AUTOCOMMIT_IN_HOOK=1`; it never touches
-the repository. `AUTOCOMMIT_LLM_MODEL` pins its model; otherwise the CLI default
-is used.
+the repository. It always asks for `--model haiku` — fixed, not configurable,
+since a commit message does not need a larger model; `AUTOCOMMIT_LLM_MODEL` does
+not affect this path.
 
 The file is user-managed: never ask for an API key in the conversation and never
 run a command that takes it as an argument. Give the user the path and this

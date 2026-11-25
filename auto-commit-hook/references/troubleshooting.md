@@ -100,8 +100,8 @@ git -C /path/to/repo log -1
   `AUTOCOMMIT_IN_HOOK=1` makes any Stop it fires exit before git work, so a
   nested commit cannot happen. If an `ai:` attempt says `Not logged in`, run
   `/login` in Claude Code and let the next turn retry — the commit already
-  succeeded with heuristics. For a slow CLI, pin `AUTOCOMMIT_LLM_MODEL=haiku`
-  or raise `AUTOCOMMIT_AI_TOTAL_MS` (keep it below the hook timeout; the
+  succeeded with heuristics. The CLI already runs on haiku (fixed); if it is
+  still slow, raise `AUTOCOMMIT_AI_TOTAL_MS` (keep it below the hook timeout; the
   installer's default is 30 s). If nothing commits, check that the project is
   trusted, no merged settings file sets `disableAllHooks` /
   `allowManagedHooksOnly` (`status --doctor` reports them), and the registered
