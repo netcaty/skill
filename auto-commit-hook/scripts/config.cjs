@@ -213,7 +213,8 @@ function main() {
     const file = lib.userConfigFile();
     if (fs.existsSync(file)) {
       fs.rmSync(file);
-      console.log(opts.json ? JSON.stringify({ file, cleared: true }) : "Cleared " + file);
+      console.log(opts.json ? JSON.stringify({ file, cleared: true })
+        : "Cleared " + file + " (host session provider will be used).");
     } else {
       console.log(opts.json ? JSON.stringify({ file, cleared: false })
         : "No config to clear (" + file + ").");

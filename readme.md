@@ -27,7 +27,7 @@ clone 方式下脚本检测到旁边的 `auto-commit-hook/` 目录后会直接�
 不敲命令，在 ZCode / WorkBuddy 的对话框直接输入 prompt，让 agent 代为安装：
 
 ```
-安装 auto-commit-hook skill：执行 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash ，装到 ~/.agents/skills/auto-commit-hook/ 即可，只装 skill，不要注册任何 hook。
+直接执行 curl -fsSL https://raw.githubusercontent.com/netcaty/skill/main/install.sh | bash
 ```
 
 agent 会先请求执行该命令的权限，确认后即完成安装，效果与方式一相同。Windows 下 agent 会自动改用 Git Bash 执行。

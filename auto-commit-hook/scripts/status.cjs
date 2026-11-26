@@ -185,7 +185,7 @@ function printAi(ai) {
   }
   const label = status === "error" ? "FAILED" : status;
   const reason = ai.reason ? " - " + oneLine(ai.reason, 200) : "";
-  console.log("  ai     : " + label + reason + suffix);
+  console.log("  ai     : " + label + reason + suffix + " (commit uses file-list fallback)");
   printSensitive(ai);
   for (const item of (Array.isArray(ai.checked) ? ai.checked : []).slice(0, 5)) {
     if (!item || typeof item !== "object") continue;
@@ -259,9 +259,9 @@ function main() {
       (result.installed ? "installed" : "not installed"));
     console.log("  config : " + result.configPath + (result.configExists ? "" : " (missing)"));
     if (result.installed) {
-      console.log("  enabled: " + (result.hook && result.hook.type === "command"
-        ? "(n/a for command hooks)"
-        : result.enabled));
+      if (!result.hook || result.hook.type !== "command") {
+        console.log("  enabled: " + result.enabled);
+      }
       if (result.hook && result.hook.type === "process") {
         console.log("  hook   : " + result.hook.command + " " + JSON.stringify(result.hook.args));
         console.log("  timeout: " + (result.hook.timeoutMs || "default") + " ms");
@@ -273,9 +273,9 @@ function main() {
     console.log("  scripts: " + (result.installExists ? "present" : "missing") +
       " (" + result.installDir + ")");
     if (result.installed && result.disabled) {
-      console.log("  disabled: yes" +
+      console.log("  paused : yes" +
         (result.disabledSince ? " since " + result.disabledSince : "") +
-        " - run.sh enable to resume");
+        " (hook kept registered; run enable to resume without reinstalling)");
     }
     if (result.lastRun && result.lastRun.status === "error") {
       console.log("  last run: FAILED " + (result.lastRun.at || "?") +
@@ -283,8 +283,11 @@ function main() {
         (result.lastRun.detail || ""));
       console.log("  log    : " + path.join(result.installDir, "auto-commit.log"));
     } else if (result.lastRun && result.lastRun.skipped) {
+      const skipNote = result.lastRun.skipped === "sensitive"
+        ? "sensitive - all changed files excluded by gate; nothing to commit"
+        : result.lastRun.skipped;
       console.log("  last run: skipped " + (result.lastRun.at || "?") +
-        " (" + result.lastRun.skipped + ")");
+        " (" + skipNote + ")");
     } else if (result.lastRun) {
       console.log("  last run: ok " + (result.lastRun.at || ""));
     }
