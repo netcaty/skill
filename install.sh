@@ -81,10 +81,11 @@ else
   # under a single top-level <repo>-<ref> directory.
   ARCHIVE="${AUTOCOMMIT_INSTALL_ARCHIVE:-https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz}"
   TMP=$(mktemp -d 2>/dev/null) || fail "mktemp failed"
-  # A native coreutils build earlier on PATH (e.g. scoop) makes mktemp return a
-  # Windows path (C:\Users\...\Temp\tmp.x). Git Bash's GNU tar cannot chdir
-  # into the backslash form ("Cannot open: No such file or directory"), so
-  # normalize it to POSIX; cygpath does not exist on macOS/Linux.
+  # When TMPDIR is a native Windows path, GNU mktemp echoes it verbatim,
+  # e.g. C:\Users\...\Temp/tmp.x. GNU tar unquotes backslash escapes in -C
+  # paths (\n, \t, \a, ...), so such a directory can fail to open ("Cannot
+  # open: No such file or directory"); normalize it to POSIX. cygpath does
+  # not exist on macOS/Linux.
   if command -v cygpath >/dev/null 2>&1; then
     TMP=$(cygpath -u "$TMP" 2>/dev/null || printf '%s' "$TMP")
   fi
